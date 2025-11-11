@@ -3,45 +3,63 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Arena Duel – Safe Mode v2</title>
+<title>Arena Duel – v3 (Xiaomi/Chrome fix)</title>
 <style>
   html,body{margin:0;height:100%;background:#0e1013;}
-  canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none;}
+  canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none; -webkit-tap-highlight-color:transparent;}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <script>
-/* ---------- FULLSCREEN CANVAS ---------- */
+/* ====== Canvas fullscreen con trasformazione controllata ====== */
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d', {alpha:false});
-let vw=0, vh=0;
+
+let cssW=0, cssH=0, pxW=0, pxH=0;  // dimensioni canvas
+const W=720, H=1280;               // spazio logico in verticale
+const PLAY_H=1080, UI_H=H-PLAY_H;
+
+let scale=1, offX=0, offY=0;       // trasformazione attuale (in pixel canvas)
+
+/* aggiorna dimensioni e trasformazione */
 function resize(){
-  // dimensioni in **pixel del canvas**, corrispondenti alla dimensione CSS reale
-  const rect = canvas.getBoundingClientRect();
-  canvas.width  = Math.max(1, Math.floor(rect.width  * (window.devicePixelRatio||1)));
-  canvas.height = Math.max(1, Math.floor(rect.height * (window.devicePixelRatio||1)));
-  vw = canvas.width; vh = canvas.height;
+  const r = canvas.getBoundingClientRect();
+  cssW = r.width; cssH = r.height;
+  const dpr = window.devicePixelRatio || 1;
+  pxW = Math.max(1, Math.round(cssW*dpr));
+  pxH = Math.max(1, Math.round(cssH*dpr));
+  if(canvas.width!==pxW || canvas.height!==pxH){ canvas.width=pxW; canvas.height=pxH; }
+  // mappa W×H dentro pxW×pxH (letterboxing)
+  scale = Math.min(pxW / W, pxH / H);
+  offX  = Math.floor((pxW - W*scale)/2);
+  offY  = Math.floor((pxH - H*scale)/2);
 }
-addEventListener('resize', resize); addEventListener('orientationchange', resize);
+addEventListener('resize', resize);
+addEventListener('orientationchange', resize);
 resize();
 
-/* ---------- Coordinate logiche 9:16 + UI nel canvas ---------- */
-const W=720, H=1280;       // logico verticale
-const PLAY_H = 1080;       // area di gioco
-const UI_H = H - PLAY_H;   // area pulsanti
-let scale=1, offX=0, offY=0;
-function setTransform(){
-  scale = Math.min(vw/W, vh/H);
-  offX = Math.floor((vw - W*scale)/2);
-  offY = Math.floor((vh - H*scale)/2);
-  ctx.setTransform(scale,0,0,scale,offX,offY);
+/* funzione INVERTI trasformazione: da evento → coordinate logiche */
+function toLogical(ev){
+  // coord in CSS pixel dentro il canvas
+  const rect = canvas.getBoundingClientRect();
+  const cssX = ev.clientX - rect.left;
+  const cssY = ev.clientY - rect.top;
+  // CSS → pixel canvas
+  const Xd = cssX * (canvas.width / rect.width);
+  const Yd = cssY * (canvas.height / rect.height);
+  // pixel canvas → coordinate logiche (invertiamo Xd = offX + scale*Xl)
+  const Xl = (Xd - offX) / scale;
+  const Yl = (Yd - offY) / scale;
+  return {x:Xl, y:Yl};
 }
 
-/* ---------- Stato base ---------- */
+/* ====== Gioco (uguale a prima) ====== */
 const rand=(a,b)=>a+Math.random()*(b-a);
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 let tprev=performance.now(), playing=true;
+const LANE_Y=[PLAY_H*0.58, PLAY_H*0.70, PLAY_H*0.82];
+const RIVER_Y=PLAY_H*0.56;
 
 const state={
   mana:5, manaMax:10, manaRegen:0.015, t:0, time:0,
@@ -49,40 +67,31 @@ const state={
   enemyTowers:[{x:W*0.88,y:PLAY_H*0.60,hp:100,max:100},{x:W*0.88,y:PLAY_H*0.80,hp:100,max:100}],
   units:[], floats:[], particles:[]
 };
-const LANE_Y=[PLAY_H*0.58, PLAY_H*0.70, PLAY_H*0.82];
-const RIVER_Y=PLAY_H*0.56;
-
-/* ---------- Carte nel canvas ---------- */
-const CARDS=[
-  {label:'Scout (3)', type:'scout', cost:3},
-  {label:'Tank (4)',  type:'tank',  cost:4},
-  {label:'Spark (2)', type:'spark', cost:2},
-  {label:'Riavvia',   type:'restart', cost:0}
-];
-const cardRects=[];
 
 function addUnit(team,lane,type){
   const y=LANE_Y[lane], dir=(team==='P')?1:-1, x=(team==='P')?W*0.20:W*0.80;
-  let u={team,x,y,dir,type,cd:0};
+  const u={team,x,y,dir,type,cd:0};
   if(type==='scout') Object.assign(u,{spd:.8,hp:18,atk:3,range:14,rate:.7});
   else if(type==='tank') Object.assign(u,{spd:.45,hp:60,atk:6,range:18,rate:1.2});
-  else Object.assign(u,{spd:.7,hp:12,atk:8,range:70,rate:1.6});
+  else Object.assign(u,{spd:.7,hp:12,atk:8,range:70,rate:1.6}); // spark
   state.units.push(u);
 }
+
 let aiTimer=2.5;
 function ai(dt){
   aiTimer-=dt;
   if(aiTimer<=0 && playing){
-    aiTimer=rand(1.8,3.2);
-    const m=Math.floor(state.mana), a=[];
-    if(m>=2) a.push('spark'); if(m>=3) a.push('scout'); if(m>=4) a.push('tank');
-    if(a.length){ const tp=a[(Math.random()*a.length)|0], c=(tp==='tank'?4:(tp==='scout'?3:2));
-      state.mana=Math.max(0,state.mana-c); addUnit('E',(Math.random()*3)|0,tp); }
+    aiTimer = rand(1.8,3.2);
+    const m=Math.floor(state.mana), opt=[];
+    if(m>=2) opt.push('spark'); if(m>=3) opt.push('scout'); if(m>=4) opt.push('tank');
+    if(opt.length){ const t=opt[(Math.random()*opt.length)|0], c=(t==='tank'?4:(t==='scout'?3:2));
+      state.mana=Math.max(0,state.mana-c); addUnit('E',(Math.random()*3)|0,t); }
   }
 }
-function addFloat(x,y,v,col){ state.floats.push({x,y,v, col, t:0}); }
+
+function addFloat(x,y,v,col){ state.floats.push({x,y,v,col,t:0}); }
 function addHitSparks(x,y,col){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.5,-0.4),life:rand(.3,.6),t:0,col}); }
-function applyDamage(t,d){ if(!('hp' in t))return; t.hp-=d; const col=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-26,(d>=0?'-':'+')+Math.abs(d),col); addHitSparks(t.x,t.y-10,col); }
+function applyDamage(t,d){ if(!('hp' in t))return; t.hp-=d; const c=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-26,(d>=0?'-':'+')+Math.abs(d),c); addHitSparks(t.x,t.y-10,c); }
 function nearest(u,towers,foes){
   let best=null,bd=1e9;
   for(const f of foes){ const d=Math.hypot(f.x*u.dir-u.x*u.dir,f.y-u.y); if(d<bd){bd=d; best=f;} }
@@ -90,12 +99,12 @@ function nearest(u,towers,foes){
   return {t:best,d:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
 }
 
-/* ---------- Update ---------- */
 function step(dt){
   if(!playing) return;
   state.t+=dt; state.time+=dt;
   state.mana = clamp(state.mana + (state.manaRegen+0.003*Math.sin(state.t*2.2))*60*dt, 0, state.manaMax);
   ai(dt);
+
   for(const u of state.units){
     const enemy=u.team==='P'?'E':'P';
     const foes=state.units.filter(x=>x.team===enemy);
@@ -105,6 +114,7 @@ function step(dt){
     if(t && d<=u.range){ if(u.cd<=0){ u.cd=u.rate; applyDamage(t,u.atk); } }
     else u.x += u.spd*u.dir*60*dt;
   }
+
   for(const f of state.floats){ f.t+=dt; f.y-=20*dt; f.x+=Math.sin(f.t*6)*6*dt; }
   state.floats=state.floats.filter(f=>f.t<.9);
   for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.03; }
@@ -115,15 +125,28 @@ function step(dt){
   if(!pAlive || !eAlive) playing=false;
 }
 
-/* ---------- Draw ---------- */
+/* ====== Disegno ====== */
+const CARDS=[
+  {label:'Scout (3)', type:'scout', cost:3},
+  {label:'Tank (4)',  type:'tank',  cost:4},
+  {label:'Spark (2)', type:'spark', cost:2},
+  {label:'Riavvia',   type:'restart', cost:0}
+];
+const cardRects=[]; // hitbox dei pulsanti
+
 function drawBG(){
   const g=ctx.createLinearGradient(0,0,0,PLAY_H); g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#dbcf9a');
   ctx.fillStyle=g; ctx.fillRect(0,0,W,PLAY_H);
-  ctx.strokeStyle='#b9b083'; ctx.lineWidth=2; [PLAY_H*0.58,PLAY_H*0.70,PLAY_H*0.82].forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
-  ctx.fillStyle='#7ccbe1'; ctx.fillRect(0,RIVER_Y-6,W,12);
-  const bridge=cx=>{ ctx.save(); ctx.translate(cx,RIVER_Y); ctx.fillStyle='#8c5a2c'; ctx.strokeStyle='#5e3c1c'; ctx.lineWidth=3;
-    ctx.fillRect(-40,-12,80,24); ctx.strokeRect(-40,-12,80,24); ctx.strokeStyle='#75471f';
-    for(let i=-36;i<=36;i+=12){ ctx.beginPath(); ctx.moveTo(i,-12); ctx.lineTo(i,12); ctx.stroke(); } ctx.restore(); };
+
+  ctx.strokeStyle='#b9b083'; ctx.lineWidth=2;
+  [PLAY_H*0.58,PLAY_H*0.70,PLAY_H*0.82].forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
+
+  ctx.fillStyle='#7ccbe1'; ctx.fillRect(0,PLAY_H*0.52,W,12);
+
+  const bridge=cx=>{ ctx.save(); ctx.translate(cx,PLAY_H*0.52+6);
+    ctx.fillStyle='#8c5a2c'; ctx.strokeStyle='#5e3c1c'; ctx.lineWidth=3;
+    ctx.fillRect(-40,-12,80,24); ctx.strokeRect(-40,-12,80,24);
+    ctx.strokeStyle='#75471f'; for(let i=-36;i<=36;i+=12){ ctx.beginPath(); ctx.moveTo(i,-12); ctx.lineTo(i,12); ctx.stroke(); } ctx.restore(); };
   bridge(W*.3); bridge(W*.7);
 }
 function drawTower(t,friend){
@@ -151,55 +174,46 @@ function drawUI(){
   // fascia scura
   ctx.fillStyle='#0e1013'; ctx.fillRect(0,PLAY_H,W,UI_H);
 
-  // mana
-  ctx.fillStyle='#22324a'; ctx.fillRect(16, PLAY_H+10, W-32, 12);
-  ctx.fillStyle='#61dafb'; ctx.fillRect(16, PLAY_H+10, (W-32)*(state.mana/state.manaMax), 12);
+  // mana bar
+  ctx.fillStyle='#22324a'; ctx.fillRect(16, PLAY_H+8, W-32, 12);
+  ctx.fillStyle='#61dafb'; ctx.fillRect(16, PLAY_H+8, (W-32)*(state.mana/state.manaMax), 12);
 
   // pulsanti
   cardRects.length=0;
-  const gap=12, w=(W-32-gap*(CARDS.length-1))/CARDS.length, h=50, y=PLAY_H+28; let x=16;
+  const gap=12, w=(W-32-gap*(CARDS.length-1))/CARDS.length, h=52, y=PLAY_H+24; let x=16;
   ctx.font='16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
   for(const c of CARDS){
     ctx.fillStyle='#1b2330'; ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2; ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
     ctx.fillStyle='#eef'; ctx.fillText(c.label, x+w/2, y+h/2);
-    cardRects.push({x,y,w,h, ...c});
+    cardRects.push({x:x-6, y:y-6, w:w+12, h:h+12, ...c}); // hitbox più ampia
     x+=w+gap;
   }
 }
 function draw(){
-  setTransform();
   // letterbox
   ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0e1013'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  // area logica
   ctx.setTransform(scale,0,0,scale,offX,offY);
-
   drawBG();
   state.playerTowers.forEach(t=>drawTower(t,true));
   state.enemyTowers.forEach(t=>drawTower(t,false));
   drawUnits();
-
-  // danni/cure e particelle (leggeri)
-  for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.col; ctx.font='bold 16px system-ui'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
-  for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.col; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
-
+  // (danni/cure/particelle omessi per semplicità)
   drawUI();
 }
 
 function loop(now){
-  const dt = Math.min(0.033,(now-tprev)/1000);
+  const dt=Math.min(0.033,(now-tprev)/1000);
   tprev=now; step(dt); draw(); requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
-/* ---------- Tap robusto: usa getBoundingClientRect ---------- */
-function handleTap(clientX, clientY){
-  const rect = canvas.getBoundingClientRect();
-  // coordinate in pixel del CANVAS (non CSS)
-  const xDev = (clientX - rect.left) * (canvas.width / rect.width);
-  const yDev = (clientY - rect.top)  * (canvas.height / rect.height);
-  // converto in coordinate logiche
-  const x = (xDev - offX) / scale;
-  const y = (yDev - offY) / scale;
-
+/* ====== Pointer Events: un solo handler per tap/click ====== */
+canvas.addEventListener('pointerdown', (e)=>{
+  e.preventDefault();
+  // coord logiche
+  const {x,y} = toLogical(e);
+  // test sui bottoni
   for(const r of cardRects){
     if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
       if(r.type==='restart'){
@@ -213,9 +227,7 @@ function handleTap(clientX, clientY){
       return;
     }
   }
-}
-canvas.addEventListener('click', e=>handleTap(e.clientX, e.clientY));
-canvas.addEventListener('touchstart', e=>{ e.preventDefault(); const t=e.changedTouches[0]; handleTap(t.clientX, t.clientY); }, {passive:false});
+}, {passive:false});
 </script>
 </body>
 </html>
