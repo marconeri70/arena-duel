@@ -2,104 +2,83 @@
 <html lang="it">
 <head>
   <meta charset="utf-8" />
-  <!-- blocco zoom doppio tap e rende il touch più preciso -->
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Arena Duel – MVP</title>
   <style>
     :root{
       --bg-dark:#0e1013; --ui-bg:#1b2330; --ui-br:#2c3c54; --ink:#eef;
-      --good:#4ee46a; --river:#8ad1e8; --sand:#e7dfb5;
+      --good:#4ee46a; --sand:#e7dfb5; --river:#8ad1e8;
       --safe-b: env(safe-area-inset-bottom, 0px);
     }
+    /* Layout a colonne: topbar / stage (canvas) / ui */
     html, body { margin:0; height:100%; background:var(--bg-dark); color:var(--ink); font-family:system-ui, sans-serif; }
+    #app { height:100dvh; display:flex; flex-direction:column; }
 
-    /* Barra alta */
-    #topbar {
-      position:fixed; inset:0 0 auto 0; height:44px; display:flex; gap:12px;
-      align-items:center; justify-content:space-between; padding:0 12px;
-      background:#0e1013cc; backdrop-filter: blur(3px); z-index:5;
+    /* Topbar */
+    #topbar{
+      height:44px; display:flex; align-items:center; justify-content:space-between;
+      padding:0 12px; background:#0e1013cc; backdrop-filter:blur(3px); flex:0 0 auto;
     }
-    #mana { height:12px; background:#22324a; border-radius:8px; overflow:hidden; width:240px; border:1px solid #2c3c54; position:relative; }
+    #mana { height:12px; background:#22324a; border-radius:8px; overflow:hidden; width:220px; border:1px solid #2c3c54; position:relative; }
     #mana > div { height:100%; background:#61dafb; width:0%; transition:width .12s linear; box-shadow:0 0 10px #61dafb88 inset, 0 0 12px #61dafb66; }
     #mana::after{ content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent 0%,#ffffff44 30%,transparent 60%); animation: shimmer 2.6s linear infinite; mix-blend-mode: screen; }
     @keyframes shimmer{ from{ transform:translateX(-100%);} to{ transform:translateX(100%);} }
 
-    /* Contenitore canvas: lascia spazio a topbar e UI */
-    #stage {
-      position:fixed; left:0; right:0; top:44px; bottom:80px;
-      display:flex; align-items:center; justify-content:center;
-      background:#0000; z-index:1;
-    }
+    /* Stage = area per il canvas. Flex:1 prende tutto lo spazio libero */
+    #stage { flex:1 1 auto; display:flex; align-items:center; justify-content:center; background:#0000; }
     canvas { display:block; background:var(--sand); touch-action:none; }
 
-    /* UI in basso: sempre sopra, touch-friendly */
-    #ui {
-      position:fixed; left:0; right:0; bottom:0;
-      padding:10px 12px calc(10px + var(--safe-b));
-      display:flex; gap:10px; justify-content:center; align-items:center;
-      background:linear-gradient(180deg, transparent, #0007 50%, #000c);
-      z-index:10; pointer-events:auto;
+    /* UI in basso: resta cliccabile e non si sovrappone al canvas */
+    #ui{
+      flex:0 0 auto; display:flex; gap:10px; justify-content:center; align-items:center;
+      padding:10px 12px calc(10px + var(--safe-b)); background:linear-gradient(180deg, transparent, #0007 50%, #000c);
     }
-    .card, button {
+    .card, button{
       background:var(--ui-bg); color:var(--ink); border:1px solid var(--ui-br);
       padding:10px 14px; border-radius:12px; cursor:pointer; user-select:none;
-      box-shadow:0 4px 12px #00000040; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
-      font-size:14px; min-width:90px; text-align:center;
+      box-shadow:0 4px 12px #00000040; touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+      font-size:14px; min-width:92px; text-align:center;
     }
     .card:active, button:active { transform:translateY(1px); }
-
-    /* Messaggio se l’utente è in orizzontale */
-    #rotateHint {
-      position:fixed; inset:0; display:none; align-items:center; justify-content:center;
-      background:#0e1013f0; color:#fff; z-index:20; text-align:center; padding:24px;
-    }
-    @media (orientation: landscape){
-      #rotateHint { display:flex; }
-    }
   </style>
 </head>
 <body>
-  <div id="topbar">
-    <div><strong>Arena Duel (MVP)</strong></div>
-    <div id="status"></div>
-    <div id="mana"><div></div></div>
-  </div>
+  <div id="app">
+    <div id="topbar">
+      <div><strong>Arena Duel (MVP)</strong></div>
+      <div id="status"></div>
+      <div id="mana"><div></div></div>
+    </div>
 
-  <!-- area che gestisce il ridimensionamento -->
-  <div id="stage">
-    <canvas id="game" width="720" height="1080"></canvas>
-  </div>
+    <div id="stage">
+      <canvas id="game" width="720" height="1080"></canvas>
+    </div>
 
-  <div id="ui">
-    <div class="card" data-cost="3" data-type="scout">Scout (3)</div>
-    <div class="card" data-cost="4" data-type="tank">Tank (4)</div>
-    <div class="card" data-cost="2" data-type="spark">Spark (2)</div>
-    <button id="restart">Riavvia</button>
-  </div>
-
-  <div id="rotateHint">
-    <div>
-      <h3>Ruota il telefono</h3>
-      <p>Il gioco è ottimizzato per la <b>modalità verticale</b>.</p>
+    <div id="ui">
+      <div class="card" data-cost="3" data-type="scout">Scout (3)</div>
+      <div class="card" data-cost="4" data-type="tank">Tank (4)</div>
+      <div class="card" data-cost="2" data-type="spark">Spark (2)</div>
+      <button id="restart">Riavvia</button>
     </div>
   </div>
 
   <script>
-  // ====== RESPONSIVE SCALING (mantiene 720×1080 interni) ======
-  const VIRTUAL_W = 720, VIRTUAL_H = 1080; // sistema di coordinate logiche
+  // ----- Responsive: adatta il canvas allo spazio del #stage mantenendo 720x1080 logici
+  const VIRTUAL_W = 720, VIRTUAL_H = 1080;
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d', { alpha:false });
-  let scale = 1, offX = 0, offY = 0;
+  let scale=1, offX=0, offY=0;
 
   function resizeCanvas(){
     const stage = document.getElementById('stage');
     const cssW = stage.clientWidth;
     const cssH = stage.clientHeight;
-    const dpr = Math.min(2, window.devicePixelRatio || 1); // nitido ma senza esagerare
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+
     canvas.width  = Math.floor(cssW * dpr);
     canvas.height = Math.floor(cssH * dpr);
-    ctx.setTransform(1,0,0,1,0,0); // reset
-    // calcola scala per contenere 720x1080 dentro lo spazio disponibile
+
+    // scala per contenere 720x1080 dentro lo spazio disponibile
     scale = Math.min(canvas.width / VIRTUAL_W, canvas.height / VIRTUAL_H);
     offX = Math.floor((canvas.width  - VIRTUAL_W*scale)/2);
     offY = Math.floor((canvas.height - VIRTUAL_H*scale)/2);
@@ -109,210 +88,129 @@
   window.addEventListener('orientationchange', resizeCanvas);
   resizeCanvas();
 
-  // ====== RESTO DEL GIOCO (identico ma usa VIRTUAL_W/H) ======
-  const W = VIRTUAL_W, H = VIRTUAL_H;
-  const LANE_Y = [H*0.60, H*0.72, H*0.84];
-  const RIVER_Y = H*0.58;
+  // ----- Gioco (identico, ma usa le trasformazioni sopra)
+  const W=VIRTUAL_W, H=VIRTUAL_H;
+  const LANE_Y=[H*0.60,H*0.72,H*0.84], RIVER_Y=H*0.58;
   const status = document.getElementById('status');
   const manaFill = document.querySelector('#mana > div');
-  let last = performance.now();
-  let playing = true;
+  let last = performance.now(), playing=true;
 
-  const rand = (a,b)=>a + Math.random()*(b-a);
-  const clamp = (x,a,b)=>Math.max(a,Math.min(b,x));
+  const rand=(a,b)=>a+Math.random()*(b-a);
+  const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 
-  const state = {
-    mana: 5, manaMax: 10, manaRegen: 0.015,
-    playerTowers: [
-      {x: W*0.12, y: H*0.65, hp: 100, max: 100},
-      {x: W*0.12, y: H*0.79, hp: 100, max: 100},
-    ],
-    enemyTowers: [
-      {x: W*0.88, y: H*0.65, hp: 100, max: 100},
-      {x: W*0.88, y: H*0.79, hp: 100, max: 100},
-    ],
-    units: [],
-    floats: [],
-    particles: [],
-    time: 0, t: 0
+  const state={
+    mana:5, manaMax:10, manaRegen:0.015,
+    playerTowers:[{x:W*0.12,y:H*0.65,hp:100,max:100},{x:W*0.12,y:H*0.79,hp:100,max:100}],
+    enemyTowers:[{x:W*0.88,y:H*0.65,hp:100,max:100},{x:W*0.88,y:H*0.79,hp:100,max:100}],
+    units:[], floats:[], particles:[], time:0, t:0
   };
 
-  function addUnit(team, lane, type){
-    const y = LANE_Y[lane];
-    if(type==='scout'){
-      state.units.push({x: team==='P'? W*0.20 : W*0.80, y, dir: team==='P'? 1:-1, spd: 0.8, hp:18, atk:3, range:14, rate:0.7, cd:0, team, type});
-    } else if(type==='tank'){
-      state.units.push({x: team==='P'? W*0.20 : W*0.80, y, dir: team==='P'? 1:-1, spd: 0.45, hp:60, atk:6, range:18, rate:1.2, cd:0, team, type});
-    } else if(type==='spark'){
-      state.units.push({x: team==='P'? W*0.20 : W*0.80, y, dir: team==='P'? 1:-1, spd: 0.7, hp:12, atk:8, range:70, rate:1.6, cd:0, team, type});
-    }
+  function addUnit(team,lane,type){
+    const y=LANE_Y[lane];
+    if(type==='scout') state.units.push({x:team==='P'?W*0.20:W*0.80,y,dir:team==='P'?1:-1,spd:.8,hp:18,atk:3,range:14,rate:.7,cd:0,team,type});
+    else if(type==='tank') state.units.push({x:team==='P'?W*0.20:W*0.80,y,dir:team==='P'?1:-1,spd:.45,hp:60,atk:6,range:18,rate:1.2,cd:0,team,type});
+    else state.units.push({x:team==='P'?W*0.20:W*0.80,y,dir:team==='P'?1:-1,spd:.7,hp:12,atk:8,range:70,rate:1.6,cd:0,team,type}); // spark
   }
 
-  let aiTimer = 2.5;
+  let aiTimer=2.5;
   function ai(dt){
     aiTimer -= dt;
     if(aiTimer<=0 && playing){
-      aiTimer = rand(1.8, 3.2);
-      const affordable = [];
-      const mana = Math.floor(state.mana);
-      if(mana>=2) affordable.push('spark');
-      if(mana>=3) affordable.push('scout');
-      if(mana>=4) affordable.push('tank');
-      if(affordable.length){
-        const t = affordable[(Math.random()*affordable.length)|0];
-        const cost = t==='tank'?4: t==='scout'?3:2;
-        state.mana = Math.max(0, state.mana - cost);
-        addUnit('E', (Math.random()*3)|0, t);
-      }
+      aiTimer = rand(1.8,3.2);
+      const m=Math.floor(state.mana); const choices=[];
+      if(m>=2) choices.push('spark'); if(m>=3) choices.push('scout'); if(m>=4) choices.push('tank');
+      if(choices.length){ const t=choices[(Math.random()*choices.length)|0]; const cost=t==='tank'?4:t==='scout'?3:2;
+        state.mana=Math.max(0,state.mana-cost); addUnit('E',(Math.random()*3)|0,t); }
     }
   }
 
-  function addFloat(x,y, value, color){ state.floats.push({x,y, v:value, color, t:0}); }
-  function addHitSparks(x,y, color){ for(let i=0;i<8;i++){ state.particles.push({x,y, vx:rand(-1,1), vy:rand(-1.5,-0.4), life:rand(0.3,0.6), t:0, color}); } }
-  function applyDamage(target, dmg){
-    if(!('hp' in target)) return;
-    target.hp -= dmg;
-    const color = dmg>=0 ? '#ffb36a' : '#6afc86';
-    addFloat(target.x, target.y-26, (dmg>=0?'-':'+')+Math.abs(dmg), color);
-    addHitSparks(target.x, target.y-10, color);
-  }
-  function nearestTarget(u, towers, foes){
-    let best=null, bestD=1e9;
-    for(const f of foes){
-      const d = Math.hypot(f.x*u.dir - u.x*u.dir, f.y-u.y);
-      if(d<bestD) {bestD=d; best=f;}
-    }
-    if(!best){
-      let tgt=null, dmin=1e9;
-      for(const t of towers){
-        const d = Math.abs(t.y-u.y) + Math.abs(t.x-u.x);
-        if(t.hp>0 && d<dmin){dmin=d; tgt=t;}
-      }
-      best=tgt; bestD = best? Math.hypot(best.x-u.x, best.y-u.y):1e9;
-    }
-    return {t:best, d:bestD};
+  function addFloat(x,y,val,color){ state.floats.push({x,y,v:val,color,t:0}); }
+  function addHitSparks(x,y,color){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.5,-0.4),life:rand(.3,.6),t:0,color}); }
+  function applyDamage(t,dmg){ if(!('hp'in t))return; t.hp-=dmg; const c=dmg>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-26,(dmg>=0?'-':'+')+Math.abs(dmg),c); addHitSparks(t.x,t.y-10,c); }
+  function nearestTarget(u,towers,foes){
+    let best=null,bestD=1e9;
+    for(const f of foes){ const d=Math.hypot(f.x*u.dir-u.x*u.dir,f.y-u.y); if(d<bestD){bestD=d; best=f;} }
+    if(!best){ let tgt=null,dmin=1e9; for(const t of towers){ const d=Math.abs(t.y-u.y)+Math.abs(t.x-u.x); if(t.hp>0 && d<dmin){dmin=d; tgt=t;} } best=tgt; }
+    return {t:best, d:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
   }
 
   function step(dt){
     if(!playing) return;
-    state.t += dt; state.time += dt;
-    state.mana = clamp(state.mana + (state.manaRegen + 0.003*Math.sin(state.t*2.2))*60*dt, 0, state.manaMax);
-    manaFill.style.width = (state.mana/state.manaMax*100).toFixed(1)+'%';
+    state.t+=dt; state.time+=dt;
+    state.mana=clamp(state.mana+(state.manaRegen+0.003*Math.sin(state.t*2.2))*60*dt,0,state.manaMax);
+    manaFill.style.width=(state.mana/state.manaMax*100).toFixed(1)+'%';
 
     ai(dt);
 
     for(const u of state.units){
-      const enemyTeam = u.team==='P' ? 'E' : 'P';
-      const foeUnits = state.units.filter(x=>x.team===enemyTeam);
-      const foeTowers = (enemyTeam==='E'? state.enemyTowers: state.playerTowers);
-      const {t,d} = nearestTarget(u, foeTowers, foeUnits);
-      u.cd -= dt;
-      if(t && d <= u.range){
-        if(u.cd<=0){ u.cd = u.rate; if('hp' in t) applyDamage(t, u.atk); }
-      } else {
-        u.x += u.spd * u.dir * 60 * dt;
-      }
+      const enemy=u.team==='P'?'E':'P';
+      const foes=state.units.filter(x=>x.team===enemy);
+      const towers=(enemy==='E'?state.enemyTowers:state.playerTowers);
+      const {t,d}=nearestTarget(u,towers,foes);
+      u.cd-=dt;
+      if(t && d<=u.range){ if(u.cd<=0){ u.cd=u.rate; applyDamage(t,u.atk); } }
+      else u.x+=u.spd*u.dir*60*dt;
     }
 
-    for(const f of state.floats){ f.t += dt; f.y -= 20*dt; f.x += Math.sin(f.t*6)*6*dt; }
-    state.floats = state.floats.filter(f=>f.t<0.9);
-    for(const p of state.particles){ p.t += dt; p.x += p.vx*60*dt; p.y += p.vy*60*dt; p.vy += 0.03; }
-    state.particles = state.particles.filter(p=>p.t<p.life);
-    state.units = state.units.filter(u=>u.hp>0 && u.x>0 && u.x<W);
+    for(const f of state.floats){ f.t+=dt; f.y-=20*dt; f.x+=Math.sin(f.t*6)*6*dt; }
+    state.floats=state.floats.filter(f=>f.t<.9);
+    for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.03; }
+    state.particles=state.particles.filter(p=>p.t<p.life);
+    state.units=state.units.filter(u=>u.hp>0 && u.x>0 && u.x<W);
 
-    const pAlive = state.playerTowers.some(t=>t.hp>0);
-    const eAlive = state.enemyTowers.some(t=>t.hp>0);
-    if(!pAlive || !eAlive){ playing=false; status.textContent = !pAlive ? "Sconfitta" : "Vittoria!"; }
+    const pAlive=state.playerTowers.some(t=>t.hp>0), eAlive=state.enemyTowers.some(t=>t.hp>0);
+    if(!pAlive || !eAlive){ playing=false; status.textContent=!pAlive?'Sconfitta':'Vittoria!'; }
   }
 
   function drawBackground(){
-    const g = ctx.createLinearGradient(0,0,0,H);
-    g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#dbcf9a');
-    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
-
-    ctx.strokeStyle = '#00000010'; ctx.lineWidth=1; const step=60;
-    ctx.beginPath();
-    for(let x=0;x<=W;x+=step){ ctx.moveTo(x,0); ctx.lineTo(x,H); }
-    for(let y=0;y<=H;y+=step){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
-    ctx.stroke();
-
-    ctx.strokeStyle = '#b9b083'; ctx.lineWidth = 2;
-    LANE_Y.forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
-
-    ctx.fillStyle = '#7ccbe1'; ctx.fillRect(0, RIVER_Y-6, W, 12);
-    const waveX = (Math.sin(state.t*1.2)*0.5+0.5)*W*0.6;
-    const grad = ctx.createLinearGradient(waveX-120,0,waveX+120,0);
-    grad.addColorStop(0, '#ffffff00'); grad.addColorStop(0.5,'#ffffff66'); grad.addColorStop(1,'#ffffff00');
-    ctx.fillStyle = grad; ctx.fillRect(0, RIVER_Y-6, W, 12);
-
-    function bridge(cx){
-      ctx.save(); ctx.translate(cx,RIVER_Y);
-      ctx.fillStyle='#8c5a2c'; ctx.strokeStyle='#5e3c1c'; ctx.lineWidth=3;
-      ctx.fillRect(-40,-12,80,24); ctx.strokeRect(-40,-12,80,24);
-      ctx.strokeStyle='#75471f';
-      for(let i=-36;i<=36;i+=12){ ctx.beginPath(); ctx.moveTo(i,-12); ctx.lineTo(i,12); ctx.stroke(); }
-      ctx.restore();
-    }
-    bridge(W*0.3); bridge(W*0.7);
+    const g=ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#dbcf9a'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='#00000010'; ctx.lineWidth=1; const step=60; ctx.beginPath();
+    for(let x=0;x<=W;x+=step){ ctx.moveTo(x,0); ctx.lineTo(x,H); } for(let y=0;y<=H;y+=step){ ctx.moveTo(0,y); ctx.lineTo(W,y); } ctx.stroke();
+    ctx.strokeStyle='#b9b083'; ctx.lineWidth=2; LANE_Y.forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
+    ctx.fillStyle='#7ccbe1'; ctx.fillRect(0,RIVER_Y-6,W,12);
+    const waveX=(Math.sin(state.t*1.2)*.5+.5)*W*.6; const grad=ctx.createLinearGradient(waveX-120,0,waveX+120,0);
+    grad.addColorStop(0,'#ffffff00'); grad.addColorStop(.5,'#ffffff66'); grad.addColorStop(1,'#ffffff00'); ctx.fillStyle=grad; ctx.fillRect(0,RIVER_Y-6,W,12);
+    const bridge=cx=>{ ctx.save(); ctx.translate(cx,RIVER_Y); ctx.fillStyle='#8c5a2c'; ctx.strokeStyle='#5e3c1c'; ctx.lineWidth=3;
+      ctx.fillRect(-40,-12,80,24); ctx.strokeRect(-40,-12,80,24); ctx.strokeStyle='#75471f';
+      for(let i=-36;i<=36;i+=12){ ctx.beginPath(); ctx.moveTo(i,-12); ctx.lineTo(i,12); ctx.stroke(); } ctx.restore(); };
+    bridge(W*.3); bridge(W*.7);
   }
-  function drawTower(t, friendly){
-    ctx.fillStyle = '#00000020'; ctx.beginPath(); ctx.ellipse(t.x, t.y+10, 26, 10, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = friendly? '#4b6cb7' : '#c24b4b'; ctx.strokeStyle = friendly? '#0e3f8f' : '#8a1f1f'; ctx.lineWidth=3;
+  function drawTower(t,friend){ ctx.fillStyle='#00000020'; ctx.beginPath(); ctx.ellipse(t.x,t.y+10,26,10,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=friend?'#4b6cb7':'#c24b4b'; ctx.strokeStyle=friend?'#0e3f8f':'#8a1f1f'; ctx.lineWidth=3;
     ctx.beginPath(); ctx.arc(t.x,t.y,24,0,Math.PI*2); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#f2d16b'; ctx.strokeStyle='#a8841e';
-    ctx.beginPath(); ctx.moveTo(t.x-14, t.y-20); ctx.lineTo(t.x-7, t.y-10); ctx.lineTo(t.x, t.y-20);
-    ctx.lineTo(t.x+7, t.y-10); ctx.lineTo(t.x+14, t.y-20); ctx.lineTo(t.x+14, t.y-8); ctx.lineTo(t.x-14, t.y-8); ctx.closePath(); ctx.fill(); ctx.stroke();
-    const w=70, h=8; ctx.fillStyle = '#00000055'; ctx.fillRect(t.x-w/2, t.y-34, w, h);
-    const p = clamp(t.hp/t.max,0,1); ctx.fillStyle = '#4ee46a'; ctx.fillRect(t.x-w/2, t.y-34, w*p, h);
-    ctx.strokeStyle='#183b1f66'; ctx.strokeRect(t.x-w/2, t.y-34, w, h);
+    ctx.fillStyle='#f2d16b'; ctx.strokeStyle='#a8841e';
+    ctx.beginPath(); ctx.moveTo(t.x-14,t.y-20); ctx.lineTo(t.x-7,t.y-10); ctx.lineTo(t.x,t.y-20); ctx.lineTo(t.x+7,t.y-10); ctx.lineTo(t.x+14,t.y-20); ctx.lineTo(t.x+14,t.y-8); ctx.lineTo(t.x-14,t.y-8); ctx.closePath(); ctx.fill(); ctx.stroke();
+    const w=70,h=8; ctx.fillStyle='#00000055'; ctx.fillRect(t.x-w/2,t.y-34,w,h); const p=t.hp/t.max; ctx.fillStyle='#4ee46a'; ctx.fillRect(t.x-w/2,t.y-34,w*clamp(p,0,1),h); ctx.strokeStyle='#183b1f66'; ctx.strokeRect(t.x-w/2,t.y-34,w,h);
   }
   function drawUnit(u){
-    ctx.fillStyle = '#00000020'; ctx.beginPath(); ctx.ellipse(u.x, u.y+8, 16, 7, 0, 0, Math.PI*2); ctx.fill();
-    if(u.team==='P'){ ctx.fillStyle = '#2f80ed'; ctx.strokeStyle='#0b4ea2'; }
-    else { ctx.fillStyle = '#eb5757'; ctx.strokeStyle='#9b1c1c'; }
+    ctx.fillStyle='#00000020'; ctx.beginPath(); ctx.ellipse(u.x,u.y+8,16,7,0,0,Math.PI*2); ctx.fill();
+    if(u.team==='P'){ ctx.fillStyle='#2f80ed'; ctx.strokeStyle='#0b4ea2'; } else { ctx.fillStyle='#eb5757'; ctx.strokeStyle='#9b1c1c'; }
     ctx.lineWidth=2;
-    if(u.type==='tank'){ ctx.fillRect(u.x-16, u.y-12, 32, 24); ctx.strokeRect(u.x-16, u.y-12, 32, 24); }
+    if(u.type==='tank'){ ctx.fillRect(u.x-16,u.y-12,32,24); ctx.strokeRect(u.x-16,u.y-12,32,24); }
     else if(u.type==='scout'){ ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke(); }
     else { ctx.beginPath(); ctx.moveTo(u.x-14,u.y+10); ctx.lineTo(u.x+14,u.y+10); ctx.lineTo(u.x,u.y-12); ctx.closePath(); ctx.fill(); ctx.stroke(); }
-    ctx.fillStyle='#00000055'; ctx.fillRect(u.x-12, u.y-20, 24, 4);
-    const maxhp = u.type==='tank'?60:u.type==='scout'?18:12;
-    ctx.fillStyle='#4ee46a'; ctx.fillRect(u.x-12, u.y-20, 24*clamp(u.hp/maxhp,0,1),4);
+    ctx.fillStyle='#00000055'; ctx.fillRect(u.x-12,u.y-20,24,4);
+    const maxhp=u.type==='tank'?60:u.type==='scout'?18:12; ctx.fillStyle='#4ee46a'; ctx.fillRect(u.x-12,u.y-20,24*clamp(u.hp/maxhp,0,1),4);
   }
   function draw(){
-    drawBackground();
-    state.playerTowers.forEach(t=>drawTower(t,true));
-    state.enemyTowers.forEach(t=>drawTower(t,false));
-    for(const u of state.units){ drawUnit(u); }
-    for(const f of state.floats){ const a = 1 - f.t/0.9; ctx.globalAlpha = a; ctx.fillStyle = f.color; ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(f.v, f.x, f.y); ctx.globalAlpha = 1; }
-    for(const p of state.particles){ const a = 1 - p.t/p.life; ctx.globalAlpha = a; ctx.fillStyle = p.color; ctx.fillRect(p.x-2, p.y-2, 4, 4); ctx.globalAlpha = 1; }
+    drawBackground(); state.playerTowers.forEach(t=>drawTower(t,true)); state.enemyTowers.forEach(t=>drawTower(t,false));
+    for(const u of state.units) drawUnit(u);
+    for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.color; ctx.font='bold 16px system-ui, sans-serif'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
+    for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.color; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
   }
-  function loop(t){ const dt = Math.min(0.033, (t-last)/1000); last=t; step(dt); // adattamento trasformazione già impostato
-    // reset trasform prima di disegnare (serve quando cambia DPR)
-    ctx.setTransform(scale,0,0,scale,offX,offY);
-    draw(); requestAnimationFrame(loop);
-  }
+  function loop(t){ const dt=Math.min(0.033,(t-last)/1000); last=t; step(dt); ctx.setTransform(scale,0,0,scale,offX,offY); draw(); requestAnimationFrame(loop); }
   requestAnimationFrame(loop);
 
-  // ====== Input (click + touch immediato) ======
-  function onCard(type, cost){
-    if(state.mana < cost || !playing) return;
-    const lane = Math.floor(state.time*2) % 3;
-    addUnit('P', lane, type);
-    state.mana = Math.max(0, state.mana - cost);
-  }
-  document.querySelectorAll('.card').forEach(card=>{
-    const cost = +card.dataset.cost; const type = card.dataset.type;
-    card.addEventListener('click', ()=>onCard(type,cost));
-    card.addEventListener('touchstart', (e)=>{ e.preventDefault(); onCard(type,cost); }, {passive:false});
+  // ----- Input (click + touch)
+  function playCard(type,cost){ if(state.mana<cost||!playing)return; const lane=Math.floor(state.time*2)%3; addUnit('P',lane,type); state.mana=Math.max(0,state.mana-cost); }
+  document.querySelectorAll('.card').forEach(el=>{ const cost=+el.dataset.cost, type=el.dataset.type;
+    el.addEventListener('click', ()=>playCard(type,cost));
+    el.addEventListener('touchstart', e=>{ e.preventDefault(); playCard(type,cost); }, {passive:false});
   });
-  const restart = document.getElementById('restart');
-  function doRestart(){
-    state.mana=5; state.units.length=0; state.time=0; state.t=0; playing=true; status.textContent='';
-    state.playerTowers.forEach(t=>{t.hp=t.max;});
-    state.enemyTowers.forEach(t=>{t.hp=t.max;});
-  }
+  const restart=document.getElementById('restart');
+  function doRestart(){ state.mana=5; state.units.length=0; state.time=0; state.t=0; playing=true; status.textContent=''; state.playerTowers.forEach(t=>t.hp=t.max); state.enemyTowers.forEach(t=>t.hp=t.max); }
   restart.addEventListener('click', doRestart);
-  restart.addEventListener('touchstart', (e)=>{ e.preventDefault(); doRestart(); }, {passive:false});
+  restart.addEventListener('touchstart', e=>{ e.preventDefault(); doRestart(); }, {passive:false});
   </script>
 </body>
 </html>
