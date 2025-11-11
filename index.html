@@ -3,35 +3,33 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Arena Duel – Safe Mode</title>
+<title>Arena Duel – Safe Mode v2</title>
 <style>
   html,body{margin:0;height:100%;background:#0e1013;}
-  /* Canvas a schermo intero: niente overlay HTML */
   canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none;}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <script>
-/* ---------- FULLSCREEN CANVAS (tutti i telefoni) ---------- */
-const dpr = Math.min(2, window.devicePixelRatio || 1);
+/* ---------- FULLSCREEN CANVAS ---------- */
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d', {alpha:false});
 let vw=0, vh=0;
 function resize(){
-  vw = Math.floor(window.innerWidth * dpr);
-  vh = Math.floor(window.innerHeight * dpr);
-  canvas.width = vw;
-  canvas.height = vh;
+  // dimensioni in **pixel del canvas**, corrispondenti alla dimensione CSS reale
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = Math.max(1, Math.floor(rect.width  * (window.devicePixelRatio||1)));
+  canvas.height = Math.max(1, Math.floor(rect.height * (window.devicePixelRatio||1)));
+  vw = canvas.width; vh = canvas.height;
 }
-window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', resize);
+addEventListener('resize', resize); addEventListener('orientationchange', resize);
 resize();
 
-/* ---------- Coordinate logiche 9:16 e letterboxing ---------- */
-const W=720, H=1280;              // campo logico (un po' più alto per bar pulsanti)
-const PLAY_H = 1080;              // parte superiore = campo di gioco
-const UI_H = H - PLAY_H;          // barra pulsanti
+/* ---------- Coordinate logiche 9:16 + UI nel canvas ---------- */
+const W=720, H=1280;       // logico verticale
+const PLAY_H = 1080;       // area di gioco
+const UI_H = H - PLAY_H;   // area pulsanti
 let scale=1, offX=0, offY=0;
 function setTransform(){
   scale = Math.min(vw/W, vh/H);
@@ -40,10 +38,10 @@ function setTransform(){
   ctx.setTransform(scale,0,0,scale,offX,offY);
 }
 
-/* ---------- Stato di gioco ---------- */
+/* ---------- Stato base ---------- */
 const rand=(a,b)=>a+Math.random()*(b-a);
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
-let last=performance.now(), playing=true;
+let tprev=performance.now(), playing=true;
 
 const state={
   mana:5, manaMax:10, manaRegen:0.015, t:0, time:0,
@@ -54,21 +52,21 @@ const state={
 const LANE_Y=[PLAY_H*0.58, PLAY_H*0.70, PLAY_H*0.82];
 const RIVER_Y=PLAY_H*0.56;
 
-/* ---------- Carte/pulsanti disegnati nel canvas ---------- */
+/* ---------- Carte nel canvas ---------- */
 const CARDS=[
   {label:'Scout (3)', type:'scout', cost:3},
   {label:'Tank (4)',  type:'tank',  cost:4},
   {label:'Spark (2)', type:'spark', cost:2},
   {label:'Riavvia',   type:'restart', cost:0}
 ];
-const cardRects=[]; // posizioni disegnate (per hit-test)
+const cardRects=[];
 
 function addUnit(team,lane,type){
   const y=LANE_Y[lane], dir=(team==='P')?1:-1, x=(team==='P')?W*0.20:W*0.80;
   let u={team,x,y,dir,type,cd:0};
   if(type==='scout') Object.assign(u,{spd:.8,hp:18,atk:3,range:14,rate:.7});
   else if(type==='tank') Object.assign(u,{spd:.45,hp:60,atk:6,range:18,rate:1.2});
-  else Object.assign(u,{spd:.7,hp:12,atk:8,range:70,rate:1.6}); // spark
+  else Object.assign(u,{spd:.7,hp:12,atk:8,range:70,rate:1.6});
   state.units.push(u);
 }
 let aiTimer=2.5;
@@ -78,31 +76,31 @@ function ai(dt){
     aiTimer=rand(1.8,3.2);
     const m=Math.floor(state.mana), a=[];
     if(m>=2) a.push('spark'); if(m>=3) a.push('scout'); if(m>=4) a.push('tank');
-    if(a.length){ const t=a[(Math.random()*a.length)|0], c=(t==='tank'?4:(t==='scout'?3:2));
-      state.mana=Math.max(0,state.mana-c); addUnit('E',(Math.random()*3)|0,t); }
+    if(a.length){ const tp=a[(Math.random()*a.length)|0], c=(tp==='tank'?4:(tp==='scout'?3:2));
+      state.mana=Math.max(0,state.mana-c); addUnit('E',(Math.random()*3)|0,tp); }
   }
 }
-function addFloat(x,y,v,color){ state.floats.push({x,y,v,color,t:0}); }
-function addHitSparks(x,y,color){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.5,-0.4),life:rand(.3,.6),t:0,color}); }
-function applyDamage(t,dmg){ if(!('hp' in t))return; t.hp-=dmg; const c=dmg>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-26,(dmg>=0?'-':'+')+Math.abs(dmg),c); addHitSparks(t.x,t.y-10,c); }
-function nearestTarget(u,towers,foes){
-  let best=null,bestD=1e9;
-  for(const f of foes){ const d=Math.hypot(f.x*u.dir-u.x*u.dir,f.y-u.y); if(d<bestD){bestD=d; best=f;} }
-  if(!best){ let tgt=null,dmin=1e9; for(const t of towers){ const d=Math.abs(t.y-u.y)+Math.abs(t.x-u.x); if(t.hp>0 && d<dmin){dmin=d; tgt=t;} } best=tgt; }
-  return {t:best, d:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
+function addFloat(x,y,v,col){ state.floats.push({x,y,v, col, t:0}); }
+function addHitSparks(x,y,col){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.5,-0.4),life:rand(.3,.6),t:0,col}); }
+function applyDamage(t,d){ if(!('hp' in t))return; t.hp-=d; const col=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-26,(d>=0?'-':'+')+Math.abs(d),col); addHitSparks(t.x,t.y-10,col); }
+function nearest(u,towers,foes){
+  let best=null,bd=1e9;
+  for(const f of foes){ const d=Math.hypot(f.x*u.dir-u.x*u.dir,f.y-u.y); if(d<bd){bd=d; best=f;} }
+  if(!best){ let tgt=null,dm=1e9; for(const t of towers){ const d=Math.abs(t.y-u.y)+Math.abs(t.x-u.x); if(t.hp>0&&d<dm){dm=d; tgt=t;} } best=tgt; }
+  return {t:best,d:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
 }
 
-/* ---------- Update/Draw ---------- */
+/* ---------- Update ---------- */
 function step(dt){
   if(!playing) return;
   state.t+=dt; state.time+=dt;
-  state.mana=clamp(state.mana+(state.manaRegen+0.003*Math.sin(state.t*2.2))*60*dt,0,state.manaMax);
+  state.mana = clamp(state.mana + (state.manaRegen+0.003*Math.sin(state.t*2.2))*60*dt, 0, state.manaMax);
   ai(dt);
   for(const u of state.units){
     const enemy=u.team==='P'?'E':'P';
     const foes=state.units.filter(x=>x.team===enemy);
     const towers=(enemy==='E'?state.enemyTowers:state.playerTowers);
-    const {t,d}=nearestTarget(u,towers,foes);
+    const {t,d}=nearest(u,towers,foes);
     u.cd-=dt;
     if(t && d<=u.range){ if(u.cd<=0){ u.cd=u.rate; applyDamage(t,u.atk); } }
     else u.x += u.spd*u.dir*60*dt;
@@ -116,21 +114,16 @@ function step(dt){
   const pAlive=state.playerTowers.some(t=>t.hp>0), eAlive=state.enemyTowers.some(t=>t.hp>0);
   if(!pAlive || !eAlive) playing=false;
 }
-function drawBackground(){
-  // base
-  const g=ctx.createLinearGradient(0,0,0,PLAY_H);
-  g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#dbcf9a');
+
+/* ---------- Draw ---------- */
+function drawBG(){
+  const g=ctx.createLinearGradient(0,0,0,PLAY_H); g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#dbcf9a');
   ctx.fillStyle=g; ctx.fillRect(0,0,W,PLAY_H);
-
-  // corsie
-  ctx.strokeStyle='#b9b083'; ctx.lineWidth=2;
-  LANE_Y.forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
-
-  // fiume + ponti
+  ctx.strokeStyle='#b9b083'; ctx.lineWidth=2; [PLAY_H*0.58,PLAY_H*0.70,PLAY_H*0.82].forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
   ctx.fillStyle='#7ccbe1'; ctx.fillRect(0,RIVER_Y-6,W,12);
   const bridge=cx=>{ ctx.save(); ctx.translate(cx,RIVER_Y); ctx.fillStyle='#8c5a2c'; ctx.strokeStyle='#5e3c1c'; ctx.lineWidth=3;
-    ctx.fillRect(-40,-12,80,24); ctx.strokeRect(-40,-12,80,24);
-    ctx.strokeStyle='#75471f'; for(let i=-36;i<=36;i+=12){ ctx.beginPath(); ctx.moveTo(i,-12); ctx.lineTo(i,12); ctx.stroke(); } ctx.restore(); };
+    ctx.fillRect(-40,-12,80,24); ctx.strokeRect(-40,-12,80,24); ctx.strokeStyle='#75471f';
+    for(let i=-36;i<=36;i+=12){ ctx.beginPath(); ctx.moveTo(i,-12); ctx.lineTo(i,12); ctx.stroke(); } ctx.restore(); };
   bridge(W*.3); bridge(W*.7);
 }
 function drawTower(t,friend){
@@ -140,7 +133,7 @@ function drawTower(t,friend){
   ctx.fillStyle='#f2d16b'; ctx.strokeStyle='#a8841e';
   ctx.beginPath(); ctx.moveTo(t.x-14,t.y-20); ctx.lineTo(t.x-7,t.y-10); ctx.lineTo(t.x,t.y-20); ctx.lineTo(t.x+7,t.y-10); ctx.lineTo(t.x+14,t.y-20); ctx.lineTo(t.x+14,t.y-8); ctx.lineTo(t.x-14,t.y-8); ctx.closePath(); ctx.fill(); ctx.stroke();
   const w=70,h=8; ctx.fillStyle='#00000055'; ctx.fillRect(t.x-w/2,t.y-34,w,h);
-  const p=t.hp/t.max; ctx.fillStyle='#4ee46a'; ctx.fillRect(t.x-w/2,t.y-34,w*clamp(p,0,1),h);
+  ctx.fillStyle='#4ee46a'; ctx.fillRect(t.x-w/2,t.y-34,w*clamp(t.hp/t.max,0,1),h);
 }
 function drawUnits(){
   for(const u of state.units){
@@ -150,106 +143,79 @@ function drawUnits(){
     if(u.type==='tank'){ ctx.fillRect(u.x-16,u.y-12,32,24); ctx.strokeRect(u.x-16,u.y-12,32,24); }
     else if(u.type==='scout'){ ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke(); }
     else { ctx.beginPath(); ctx.moveTo(u.x-14,u.y+10); ctx.lineTo(u.x+14,u.y+10); ctx.lineTo(u.x,u.y-12); ctx.closePath(); ctx.fill(); ctx.stroke(); }
-
-    ctx.fillStyle='#00000055'; ctx.fillRect(u.x-12, u.y-20, 24, 4);
-    const maxhp=u.type==='tank'?60:u.type==='scout'?18:12;
-    ctx.fillStyle='#4ee46a'; ctx.fillRect(u.x-12, u.y-20, 24*clamp(u.hp/maxhp,0,1),4);
+    ctx.fillStyle='#00000055'; ctx.fillRect(u.x-12,u.y-20,24,4);
+    const maxhp=u.type==='tank'?60:u.type==='scout'?18:12; ctx.fillStyle='#4ee46a'; ctx.fillRect(u.x-12,u.y-20,24*clamp(u.hp/maxhp,0,1),4);
   }
-}
-function drawFloatsParticles(){
-  for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.color; ctx.font='bold 16px system-ui'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
-  for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.color; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
 }
 function drawUI(){
-  // barra nera
-  ctx.fillStyle='#0e1013'; ctx.fillRect(0,PLAY_H, W, UI_H);
+  // fascia scura
+  ctx.fillStyle='#0e1013'; ctx.fillRect(0,PLAY_H,W,UI_H);
 
-  // mana bar
-  ctx.fillStyle='#22324a'; ctx.fillRect(20, PLAY_H+16, W-40, 12);
-  ctx.fillStyle='#61dafb';
-  const mw = (W-40) * (state.mana/state.manaMax);
-  ctx.fillRect(20, PLAY_H+16, mw, 12);
+  // mana
+  ctx.fillStyle='#22324a'; ctx.fillRect(16, PLAY_H+10, W-32, 12);
+  ctx.fillStyle='#61dafb'; ctx.fillRect(16, PLAY_H+10, (W-32)*(state.mana/state.manaMax), 12);
 
-  // carte
+  // pulsanti
   cardRects.length=0;
-  const labels = CARDS;
-  const gap=14, w = (W - 40 - gap*(labels.length-1)) / labels.length, h=48, y=PLAY_H+36;
-  let x=20;
-  for(const c of labels){
-    // bottone
-    ctx.fillStyle='#1b2330'; ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2;
-    ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
-    // testo
-    ctx.fillStyle='#eef'; ctx.font='16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(c.label, x+w/2, y+h/2);
-    cardRects.push({x, y, w, h, ...c});
-    x += w + gap;
-  }
-
-  // testo vittoria/sconfitta
-  if(!playing){
-    ctx.fillStyle='#ffffffdd'; ctx.font='bold 36px system-ui'; ctx.textAlign='center';
-    ctx.fillText('Partita finita – ' + (state.enemyTowers.some(t=>t.hp<=0)?'VITTORIA':'SCONFITTA'), W/2, PLAY_H/2);
+  const gap=12, w=(W-32-gap*(CARDS.length-1))/CARDS.length, h=50, y=PLAY_H+28; let x=16;
+  ctx.font='16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const c of CARDS){
+    ctx.fillStyle='#1b2330'; ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2; ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
+    ctx.fillStyle='#eef'; ctx.fillText(c.label, x+w/2, y+h/2);
+    cardRects.push({x,y,w,h, ...c});
+    x+=w+gap;
   }
 }
 function draw(){
   setTransform();
-  // sfondo letterbox (ai lati)
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.fillStyle='#0e1013'; ctx.fillRect(0,0,vw,vh);
+  // letterbox
+  ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0e1013'; ctx.fillRect(0,0,canvas.width,canvas.height);
   ctx.setTransform(scale,0,0,scale,offX,offY);
 
-  drawBackground();
+  drawBG();
   state.playerTowers.forEach(t=>drawTower(t,true));
   state.enemyTowers.forEach(t=>drawTower(t,false));
   drawUnits();
-  drawFloatsParticles();
+
+  // danni/cure e particelle (leggeri)
+  for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.col; ctx.font='bold 16px system-ui'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
+  for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.col; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
+
   drawUI();
 }
 
-function loop(t){
-  const dt = Math.min(0.033,(t-last)/1000);
-  last=t; step(dt); draw();
-  requestAnimationFrame(loop);
+function loop(now){
+  const dt = Math.min(0.033,(now-tprev)/1000);
+  tprev=now; step(dt); draw(); requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
-/* ---------- Input: click/touch su bottoni nel canvas ---------- */
-function toLogical(px,py){
-  // da pixel schermo a coordinate logiche
-  const x = (px - offX) / scale;
-  const y = (py - offY) / scale;
-  return {x,y};
-}
+/* ---------- Tap robusto: usa getBoundingClientRect ---------- */
 function handleTap(clientX, clientY){
-  const {x,y} = toLogical(clientX*dpr, clientY*dpr);
+  const rect = canvas.getBoundingClientRect();
+  // coordinate in pixel del CANVAS (non CSS)
+  const xDev = (clientX - rect.left) * (canvas.width / rect.width);
+  const yDev = (clientY - rect.top)  * (canvas.height / rect.height);
+  // converto in coordinate logiche
+  const x = (xDev - offX) / scale;
+  const y = (yDev - offY) / scale;
+
   for(const r of cardRects){
     if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
       if(r.type==='restart'){
         state.units.length=0; state.mana=5; state.t=0; state.time=0; playing=true;
         state.playerTowers.forEach(t=>t.hp=t.max); state.enemyTowers.forEach(t=>t.hp=t.max);
-      }else{
-        if(state.mana>=r.cost && playing){
-          const lane = Math.floor(state.time*2) % 3;
-          addUnit('P', lane, r.type);
-          state.mana -= r.cost;
-        }
+      }else if(playing && state.mana>=r.cost){
+        const lane = Math.floor(state.time*2) % 3;
+        addUnit('P', lane, r.type);
+        state.mana -= r.cost;
       }
       return;
     }
   }
 }
 canvas.addEventListener('click', e=>handleTap(e.clientX, e.clientY));
-canvas.addEventListener('touchstart', e=>{
-  e.preventDefault();
-  const t=e.changedTouches[0];
-  handleTap(t.clientX, t.clientY);
-},{passive:false});
-
-/* ---------- Cache-busting: suggerimento ---------
-Se non vedi cambiamenti, forza il refresh aprendo il link con ?v=sm1
-es: https://tuoneri70.github.io/?v=sm1
--------------------------------------------------- */
+canvas.addEventListener('touchstart', e=>{ e.preventDefault(); const t=e.changedTouches[0]; handleTap(t.clientX, t.clientY); }, {passive:false});
 </script>
 </body>
 </html>
