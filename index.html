@@ -1,217 +1,255 @@
 <!doctype html>
 <html lang="it">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
-  <title>Arena Duel – Mobile Fix</title>
-  <style>
-    html, body {
-      margin: 0; padding: 0;
-      background: #0e1013;
-      color: #eef;
-      font-family: system-ui, sans-serif;
-      height: 100%;
-      overflow: hidden;
-    }
-    #topbar {
-      background: #0e1013cc;
-      color: #eef;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 12px;
-      height: 42px;
-    }
-    #mana {
-      height: 10px;
-      background: #22324a;
-      border: 1px solid #2c3c54;
-      border-radius: 6px;
-      width: 160px;
-      overflow: hidden;
-    }
-    #mana div {
-      height: 100%;
-      background: #61dafb;
-      width: 0%;
-      transition: width 0.1s linear;
-    }
-    #container {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      width: 100%;
-    }
-    #stage {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #e7dfb5;
-    }
-    canvas {
-      width: 100%;
-      height: 100%;
-      touch-action: none;
-    }
-    #ui {
-      background: #0e1013dd;
-      display: flex;
-      justify-content: center;
-      gap: 8px;
-      padding: 8px;
-    }
-    .card, button {
-      background: #1b2330;
-      border: 1px solid #2c3c54;
-      color: #eef;
-      border-radius: 8px;
-      padding: 8px 10px;
-      font-size: 14px;
-      min-width: 80px;
-      text-align: center;
-      user-select: none;
-      touch-action: manipulation;
-    }
-    .card:active, button:active {
-      transform: scale(0.96);
-    }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<title>Arena Duel – Safe Mode</title>
+<style>
+  html,body{margin:0;height:100%;background:#0e1013;}
+  /* Canvas a schermo intero: niente overlay HTML */
+  canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none;}
+</style>
 </head>
 <body>
-  <div id="container">
-    <div id="topbar">
-      <strong>Arena Duel (MVP)</strong>
-      <div id="mana"><div></div></div>
-    </div>
+<canvas id="game"></canvas>
+<script>
+/* ---------- FULLSCREEN CANVAS (tutti i telefoni) ---------- */
+const dpr = Math.min(2, window.devicePixelRatio || 1);
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d', {alpha:false});
+let vw=0, vh=0;
+function resize(){
+  vw = Math.floor(window.innerWidth * dpr);
+  vh = Math.floor(window.innerHeight * dpr);
+  canvas.width = vw;
+  canvas.height = vh;
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', resize);
+resize();
 
-    <div id="stage">
-      <canvas id="game" width="720" height="1080"></canvas>
-    </div>
+/* ---------- Coordinate logiche 9:16 e letterboxing ---------- */
+const W=720, H=1280;              // campo logico (un po' più alto per bar pulsanti)
+const PLAY_H = 1080;              // parte superiore = campo di gioco
+const UI_H = H - PLAY_H;          // barra pulsanti
+let scale=1, offX=0, offY=0;
+function setTransform(){
+  scale = Math.min(vw/W, vh/H);
+  offX = Math.floor((vw - W*scale)/2);
+  offY = Math.floor((vh - H*scale)/2);
+  ctx.setTransform(scale,0,0,scale,offX,offY);
+}
 
-    <div id="ui">
-      <div class="card" data-cost="3" data-type="scout">Scout (3)</div>
-      <div class="card" data-cost="4" data-type="tank">Tank (4)</div>
-      <div class="card" data-cost="2" data-type="spark">Spark (2)</div>
-      <button id="restart">Riavvia</button>
-    </div>
-  </div>
+/* ---------- Stato di gioco ---------- */
+const rand=(a,b)=>a+Math.random()*(b-a);
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+let last=performance.now(), playing=true;
 
-  <script>
-    const canvas = document.getElementById("game");
-    const ctx = canvas.getContext("2d");
-    const manaBar = document.querySelector("#mana div");
-    const W = 720, H = 1080;
-    let scale = 1, offsetX = 0, offsetY = 0;
-    let last = performance.now(), playing = true;
+const state={
+  mana:5, manaMax:10, manaRegen:0.015, t:0, time:0,
+  playerTowers:[{x:W*0.12,y:PLAY_H*0.60,hp:100,max:100},{x:W*0.12,y:PLAY_H*0.80,hp:100,max:100}],
+  enemyTowers:[{x:W*0.88,y:PLAY_H*0.60,hp:100,max:100},{x:W*0.88,y:PLAY_H*0.80,hp:100,max:100}],
+  units:[], floats:[], particles:[]
+};
+const LANE_Y=[PLAY_H*0.58, PLAY_H*0.70, PLAY_H*0.82];
+const RIVER_Y=PLAY_H*0.56;
 
-    const state = {
-      mana: 5, maxMana: 10, regen: 0.015, t: 0, time: 0,
-      playerTowers: [{x: W*0.12, y: H*0.65, hp: 100, max: 100}, {x: W*0.12, y: H*0.79, hp: 100, max: 100}],
-      enemyTowers: [{x: W*0.88, y: H*0.65, hp: 100, max: 100}, {x: W*0.88, y: H*0.79, hp: 100, max: 100}],
-      units: []
-    };
+/* ---------- Carte/pulsanti disegnati nel canvas ---------- */
+const CARDS=[
+  {label:'Scout (3)', type:'scout', cost:3},
+  {label:'Tank (4)',  type:'tank',  cost:4},
+  {label:'Spark (2)', type:'spark', cost:2},
+  {label:'Riavvia',   type:'restart', cost:0}
+];
+const cardRects=[]; // posizioni disegnate (per hit-test)
 
-    const rand = (a,b)=>a + Math.random()*(b-a);
-    const clamp = (x,a,b)=>Math.max(a,Math.min(b,x));
+function addUnit(team,lane,type){
+  const y=LANE_Y[lane], dir=(team==='P')?1:-1, x=(team==='P')?W*0.20:W*0.80;
+  let u={team,x,y,dir,type,cd:0};
+  if(type==='scout') Object.assign(u,{spd:.8,hp:18,atk:3,range:14,rate:.7});
+  else if(type==='tank') Object.assign(u,{spd:.45,hp:60,atk:6,range:18,rate:1.2});
+  else Object.assign(u,{spd:.7,hp:12,atk:8,range:70,rate:1.6}); // spark
+  state.units.push(u);
+}
+let aiTimer=2.5;
+function ai(dt){
+  aiTimer-=dt;
+  if(aiTimer<=0 && playing){
+    aiTimer=rand(1.8,3.2);
+    const m=Math.floor(state.mana), a=[];
+    if(m>=2) a.push('spark'); if(m>=3) a.push('scout'); if(m>=4) a.push('tank');
+    if(a.length){ const t=a[(Math.random()*a.length)|0], c=(t==='tank'?4:(t==='scout'?3:2));
+      state.mana=Math.max(0,state.mana-c); addUnit('E',(Math.random()*3)|0,t); }
+  }
+}
+function addFloat(x,y,v,color){ state.floats.push({x,y,v,color,t:0}); }
+function addHitSparks(x,y,color){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.5,-0.4),life:rand(.3,.6),t:0,color}); }
+function applyDamage(t,dmg){ if(!('hp' in t))return; t.hp-=dmg; const c=dmg>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-26,(dmg>=0?'-':'+')+Math.abs(dmg),c); addHitSparks(t.x,t.y-10,c); }
+function nearestTarget(u,towers,foes){
+  let best=null,bestD=1e9;
+  for(const f of foes){ const d=Math.hypot(f.x*u.dir-u.x*u.dir,f.y-u.y); if(d<bestD){bestD=d; best=f;} }
+  if(!best){ let tgt=null,dmin=1e9; for(const t of towers){ const d=Math.abs(t.y-u.y)+Math.abs(t.x-u.x); if(t.hp>0 && d<dmin){dmin=d; tgt=t;} } best=tgt; }
+  return {t:best, d:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
+}
 
-    function resize() {
-      const stage = document.getElementById("stage");
-      const w = stage.clientWidth;
-      const h = stage.clientHeight;
-      const aspect = 720/1080;
-      let cw = w, ch = cw/aspect;
-      if (ch > h) { ch = h; cw = ch*aspect; }
-      canvas.width = cw;
-      canvas.height = ch;
-      scale = cw / W;
-      offsetX = (cw - W*scale)/2;
-      offsetY = (ch - H*scale)/2;
-    }
-    window.addEventListener("resize", resize);
-    resize();
+/* ---------- Update/Draw ---------- */
+function step(dt){
+  if(!playing) return;
+  state.t+=dt; state.time+=dt;
+  state.mana=clamp(state.mana+(state.manaRegen+0.003*Math.sin(state.t*2.2))*60*dt,0,state.manaMax);
+  ai(dt);
+  for(const u of state.units){
+    const enemy=u.team==='P'?'E':'P';
+    const foes=state.units.filter(x=>x.team===enemy);
+    const towers=(enemy==='E'?state.enemyTowers:state.playerTowers);
+    const {t,d}=nearestTarget(u,towers,foes);
+    u.cd-=dt;
+    if(t && d<=u.range){ if(u.cd<=0){ u.cd=u.rate; applyDamage(t,u.atk); } }
+    else u.x += u.spd*u.dir*60*dt;
+  }
+  for(const f of state.floats){ f.t+=dt; f.y-=20*dt; f.x+=Math.sin(f.t*6)*6*dt; }
+  state.floats=state.floats.filter(f=>f.t<.9);
+  for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.03; }
+  state.particles=state.particles.filter(p=>p.t<p.life);
+  state.units=state.units.filter(u=>u.hp>0 && u.x>0 && u.x<W);
 
-    function addUnit(team, lane, type){
-      const y = [H*0.60,H*0.72,H*0.84][lane];
-      const dir = team==='P'?1:-1;
-      const x = team==='P'?W*0.20:W*0.80;
-      let u = {team, x, y, dir, type, cd:0};
-      if(type==='scout') Object.assign(u,{spd:0.8,hp:18,atk:3,range:14,rate:0.7});
-      if(type==='tank') Object.assign(u,{spd:0.45,hp:60,atk:6,range:18,rate:1.2});
-      if(type==='spark') Object.assign(u,{spd:0.7,hp:12,atk:8,range:70,rate:1.6});
-      state.units.push(u);
-    }
+  const pAlive=state.playerTowers.some(t=>t.hp>0), eAlive=state.enemyTowers.some(t=>t.hp>0);
+  if(!pAlive || !eAlive) playing=false;
+}
+function drawBackground(){
+  // base
+  const g=ctx.createLinearGradient(0,0,0,PLAY_H);
+  g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#dbcf9a');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,PLAY_H);
 
-    function ai(dt){
-      if(!playing) return;
-      state.t += dt;
-      if(rand(0,1) < 0.015){
-        const m=Math.floor(state.mana);
-        const types = [];
-        if(m>=2) types.push("spark");
-        if(m>=3) types.push("scout");
-        if(m>=4) types.push("tank");
-        if(types.length){
-          const t = types[Math.floor(rand(0,types.length))];
-          const c = t==="tank"?4:t==="scout"?3:2;
-          state.mana = Math.max(0,state.mana-c);
-          addUnit("E",Math.floor(rand(0,3)),t);
+  // corsie
+  ctx.strokeStyle='#b9b083'; ctx.lineWidth=2;
+  LANE_Y.forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
+
+  // fiume + ponti
+  ctx.fillStyle='#7ccbe1'; ctx.fillRect(0,RIVER_Y-6,W,12);
+  const bridge=cx=>{ ctx.save(); ctx.translate(cx,RIVER_Y); ctx.fillStyle='#8c5a2c'; ctx.strokeStyle='#5e3c1c'; ctx.lineWidth=3;
+    ctx.fillRect(-40,-12,80,24); ctx.strokeRect(-40,-12,80,24);
+    ctx.strokeStyle='#75471f'; for(let i=-36;i<=36;i+=12){ ctx.beginPath(); ctx.moveTo(i,-12); ctx.lineTo(i,12); ctx.stroke(); } ctx.restore(); };
+  bridge(W*.3); bridge(W*.7);
+}
+function drawTower(t,friend){
+  ctx.fillStyle='#00000020'; ctx.beginPath(); ctx.ellipse(t.x,t.y+10,26,10,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=friend?'#4b6cb7':'#c24b4b'; ctx.strokeStyle=friend?'#0e3f8f':'#8a1f1f'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(t.x,t.y,24,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#f2d16b'; ctx.strokeStyle='#a8841e';
+  ctx.beginPath(); ctx.moveTo(t.x-14,t.y-20); ctx.lineTo(t.x-7,t.y-10); ctx.lineTo(t.x,t.y-20); ctx.lineTo(t.x+7,t.y-10); ctx.lineTo(t.x+14,t.y-20); ctx.lineTo(t.x+14,t.y-8); ctx.lineTo(t.x-14,t.y-8); ctx.closePath(); ctx.fill(); ctx.stroke();
+  const w=70,h=8; ctx.fillStyle='#00000055'; ctx.fillRect(t.x-w/2,t.y-34,w,h);
+  const p=t.hp/t.max; ctx.fillStyle='#4ee46a'; ctx.fillRect(t.x-w/2,t.y-34,w*clamp(p,0,1),h);
+}
+function drawUnits(){
+  for(const u of state.units){
+    ctx.fillStyle='#00000020'; ctx.beginPath(); ctx.ellipse(u.x,u.y+8,16,7,0,0,Math.PI*2); ctx.fill();
+    if(u.team==='P'){ ctx.fillStyle='#2f80ed'; ctx.strokeStyle='#0b4ea2'; } else { ctx.fillStyle='#eb5757'; ctx.strokeStyle='#9b1c1c'; }
+    ctx.lineWidth=2;
+    if(u.type==='tank'){ ctx.fillRect(u.x-16,u.y-12,32,24); ctx.strokeRect(u.x-16,u.y-12,32,24); }
+    else if(u.type==='scout'){ ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.moveTo(u.x-14,u.y+10); ctx.lineTo(u.x+14,u.y+10); ctx.lineTo(u.x,u.y-12); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+
+    ctx.fillStyle='#00000055'; ctx.fillRect(u.x-12, u.y-20, 24, 4);
+    const maxhp=u.type==='tank'?60:u.type==='scout'?18:12;
+    ctx.fillStyle='#4ee46a'; ctx.fillRect(u.x-12, u.y-20, 24*clamp(u.hp/maxhp,0,1),4);
+  }
+}
+function drawFloatsParticles(){
+  for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.color; ctx.font='bold 16px system-ui'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
+  for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.color; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
+}
+function drawUI(){
+  // barra nera
+  ctx.fillStyle='#0e1013'; ctx.fillRect(0,PLAY_H, W, UI_H);
+
+  // mana bar
+  ctx.fillStyle='#22324a'; ctx.fillRect(20, PLAY_H+16, W-40, 12);
+  ctx.fillStyle='#61dafb';
+  const mw = (W-40) * (state.mana/state.manaMax);
+  ctx.fillRect(20, PLAY_H+16, mw, 12);
+
+  // carte
+  cardRects.length=0;
+  const labels = CARDS;
+  const gap=14, w = (W - 40 - gap*(labels.length-1)) / labels.length, h=48, y=PLAY_H+36;
+  let x=20;
+  for(const c of labels){
+    // bottone
+    ctx.fillStyle='#1b2330'; ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2;
+    ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
+    // testo
+    ctx.fillStyle='#eef'; ctx.font='16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(c.label, x+w/2, y+h/2);
+    cardRects.push({x, y, w, h, ...c});
+    x += w + gap;
+  }
+
+  // testo vittoria/sconfitta
+  if(!playing){
+    ctx.fillStyle='#ffffffdd'; ctx.font='bold 36px system-ui'; ctx.textAlign='center';
+    ctx.fillText('Partita finita – ' + (state.enemyTowers.some(t=>t.hp<=0)?'VITTORIA':'SCONFITTA'), W/2, PLAY_H/2);
+  }
+}
+function draw(){
+  setTransform();
+  // sfondo letterbox (ai lati)
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle='#0e1013'; ctx.fillRect(0,0,vw,vh);
+  ctx.setTransform(scale,0,0,scale,offX,offY);
+
+  drawBackground();
+  state.playerTowers.forEach(t=>drawTower(t,true));
+  state.enemyTowers.forEach(t=>drawTower(t,false));
+  drawUnits();
+  drawFloatsParticles();
+  drawUI();
+}
+
+function loop(t){
+  const dt = Math.min(0.033,(t-last)/1000);
+  last=t; step(dt); draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ---------- Input: click/touch su bottoni nel canvas ---------- */
+function toLogical(px,py){
+  // da pixel schermo a coordinate logiche
+  const x = (px - offX) / scale;
+  const y = (py - offY) / scale;
+  return {x,y};
+}
+function handleTap(clientX, clientY){
+  const {x,y} = toLogical(clientX*dpr, clientY*dpr);
+  for(const r of cardRects){
+    if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
+      if(r.type==='restart'){
+        state.units.length=0; state.mana=5; state.t=0; state.time=0; playing=true;
+        state.playerTowers.forEach(t=>t.hp=t.max); state.enemyTowers.forEach(t=>t.hp=t.max);
+      }else{
+        if(state.mana>=r.cost && playing){
+          const lane = Math.floor(state.time*2) % 3;
+          addUnit('P', lane, r.type);
+          state.mana -= r.cost;
         }
       }
+      return;
     }
+  }
+}
+canvas.addEventListener('click', e=>handleTap(e.clientX, e.clientY));
+canvas.addEventListener('touchstart', e=>{
+  e.preventDefault();
+  const t=e.changedTouches[0];
+  handleTap(t.clientX, t.clientY);
+},{passive:false});
 
-    function step(dt){
-      if(!playing) return;
-      state.mana = clamp(state.mana + state.regen*60*dt,0,state.maxMana);
-      manaBar.style.width = (state.mana/state.maxMana*100).toFixed(1)+"%";
-      ai(dt);
-      for(const u of state.units){ u.x += u.spd * u.dir * 60 * dt; }
-      state.units = state.units.filter(u=>u.x>0 && u.x<W);
-    }
-
-    function draw(){
-      ctx.save();
-      ctx.scale(scale,scale);
-      ctx.fillStyle = "#e7dfb5";
-      ctx.fillRect(0,0,W,H);
-      ctx.fillStyle = "#8ad1e8";
-      ctx.fillRect(0,H*0.55,W,10);
-      const drawTower=(t,c)=>{
-        ctx.fillStyle=c; ctx.beginPath(); ctx.arc(t.x,t.y,22,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle="#4ee46a"; ctx.fillRect(t.x-25,t.y-32,50*(t.hp/t.max),5);
-      };
-      state.playerTowers.forEach(t=>drawTower(t,"#4b6cb7"));
-      state.enemyTowers.forEach(t=>drawTower(t,"#c24b4b"));
-      for(const u of state.units){
-        ctx.fillStyle=u.team==="P"?"#2f80ed":"#eb5757";
-        ctx.beginPath();
-        ctx.arc(u.x,u.y,10,0,Math.PI*2);
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-
-    function loop(t){
-      const dt = Math.min(0.033,(t-last)/1000);
-      last = t; step(dt); draw();
-      requestAnimationFrame(loop);
-    }
-    requestAnimationFrame(loop);
-
-    document.querySelectorAll(".card").forEach(btn=>{
-      btn.addEventListener("click",()=>{
-        const cost = +btn.dataset.cost, type = btn.dataset.type;
-        if(state.mana>=cost && playing){
-          addUnit("P",Math.floor(rand(0,3)),type);
-          state.mana -= cost;
-        }
-      });
-    });
-
-    document.getElementById("restart").addEventListener("click",()=>{
-      state.units.length=0;
-      state.mana=5; playing=true;
-    });
-  </script>
+/* ---------- Cache-busting: suggerimento ---------
+Se non vedi cambiamenti, forza il refresh aprendo il link con ?v=sm1
+es: https://tuoneri70.github.io/?v=sm1
+-------------------------------------------------- */
+</script>
 </body>
 </html>
