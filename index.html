@@ -3,64 +3,99 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Arena Vertical – MVP</title>
+<title>Arena Vertical – v2</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1115;}
-  canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none; -webkit-tap-highlight-color:transparent;}
+  canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block;
+    touch-action:none; -webkit-tap-highlight-color:transparent;}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <script>
-/* ====== Canvas fullscreen + mapping logico PORTRAIT ====== */
+/* =================== Setup canvas (portrait) =================== */
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d',{alpha:false});
-
-const W=720, H=1280;           // spazio logico in VERTICALE
-const UI_H=180;                // barra comandi grande
-const FIELD_H=H-UI_H;
-
+const W=720, H=1280;             // spazio logico verticale
+const UI_H=180;                  // pannello comandi
+const FIELD_H = H-UI_H;          // campo di gioco
 let scale=1, offX=0, offY=0;
+
 function resize(){
   const r=canvas.getBoundingClientRect();
   const dpr=window.devicePixelRatio||1;
-  canvas.width=Math.max(1,Math.round(r.width*dpr));
-  canvas.height=Math.max(1,Math.round(r.height*dpr));
-  scale=Math.min(canvas.width/W, canvas.height/H);
-  offX=Math.floor((canvas.width-W*scale)/2);
-  offY=Math.floor((canvas.height-H*scale)/2);
+  canvas.width = Math.max(1, Math.round(r.width * dpr));
+  canvas.height= Math.max(1, Math.round(r.height* dpr));
+  scale = Math.min(canvas.width/W, canvas.height/H);
+  offX  = Math.floor((canvas.width - W*scale)/2);
+  offY  = Math.floor((canvas.height- H*scale)/2);
 }
-addEventListener('resize',resize); addEventListener('orientationchange',resize); resize();
+addEventListener('resize', resize);
+addEventListener('orientationchange', resize);
+resize();
 
-function toLogical(e){
+function toLogical(ev){
   const r=canvas.getBoundingClientRect();
-  const xDev=(e.clientX-r.left)*(canvas.width/r.width);
-  const yDev=(e.clientY-r.top)*(canvas.height/r.height);
-  return {x:(xDev-offX)/scale, y:(yDev-offY)/scale};
+  const xDev=(ev.clientX - r.left) * (canvas.width / r.width);
+  const yDev=(ev.clientY - r.top ) * (canvas.height/ r.height);
+  return { x:(xDev-offX)/scale, y:(yDev-offY)/scale };
 }
 
-/* ====== Gioco verticale ====== */
+/* =================== Stato di gioco =================== */
 const rand=(a,b)=>a+Math.random()*(b-a);
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 
-const COL_X=[W*0.18, W*0.5, W*0.82];  // 3 colonne
+const COL_X=[W*0.18, W*0.5, W*0.82];   // 3 corsie verticali
 const RIVER_Y=FIELD_H*0.5;
+let selectedCol=1;                      // corsia selezionata (tap sul campo)
 
 const state={
-  mana:5, manaMax:10, manaRegen:0.016, t:0, playing:true, time:0,
-  playerTowers:[{x:W*0.25, y:FIELD_H-90, hp:100, max:100},{x:W*0.75, y:FIELD_H-90, hp:100, max:100}],
-  enemyTowers: [{x:W*0.25, y:90, hp:100, max:100},{x:W*0.75, y:90, hp:100, max:100}],
-  units:[/* {team:'P'|'E', x, y, dir:-1/1, col, spd,hp,atk,range,rate,cd,type} */],
-  floats:[], particles:[],
+  mana:5, manaMax:10, manaRegen:0.016,
+  time:0, playing:true,
+  match: {t:0, len:120},               // 120 secondi
+  playerTowers:[{x:W*0.25,y:FIELD_H-95,hp:100,max:100},{x:W*0.75,y:FIELD_H-95,hp:100,max:100}],
+  enemyTowers: [{x:W*0.25,y:95,hp:100,max:100},{x:W*0.75,y:95,hp:100,max:100}],
+  units:[], floats:[], particles:[]
 };
+
 function addUnit(team,col,type){
-  const x=COL_X[col], dir=(team==='P')?-1:1;
-  const y=(team==='P')? (FIELD_H-130) : 130;
-  let u={team, x, y, dir, col, type, cd:0};
-  if(type==='scout') Object.assign(u,{spd:1.2, hp:16, atk:3, range:20, rate:.5});
-  else if(type==='tank') Object.assign(u,{spd:.7, hp:60, atk:6, range:26, rate:1.0});
-  else Object.assign(u,{spd:.9, hp:12, atk:8, range:90, rate:1.4}); // spark
+  const x=COL_X[col], y=(team==='P')?FIELD_H-140:140, dir=(team==='P')?-1:1;
+  const u={team,x,y,dir,col,type,cd:0};
+  if(type==='scout') Object.assign(u,{spd:1.2,hp:16,atk:3,range:22,rate:.5});
+  else if(type==='tank') Object.assign(u,{spd:.7,hp:60,atk:6,range:26,rate:1.0});
+  else Object.assign(u,{spd:.9,hp:12,atk:8,range:95,rate:1.2}); // spark
   state.units.push(u);
+  sfx('place');
+}
+
+/* =================== SFX semplici (WebAudio) =================== */
+let ac;
+function sfx(kind){
+  try{
+    ac = ac || new (window.AudioContext||window.webkitAudioContext)();
+    const o=ac.createOscillator(), g=ac.createGain();
+    o.type='square'; let f=440, t=.08;
+    if(kind==='hit'){f=220; t=.05;}
+    if(kind==='place'){f=660; t=.06;}
+    if(kind==='win'){f=880; t=.4;}
+    if(kind==='lose'){f=160; t=.4;}
+    o.frequency.value=f; g.gain.value=.06;
+    o.connect(g); g.connect(ac.destination); o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime+t);
+    o.stop(ac.currentTime+t);
+  }catch(_){}
+}
+
+/* =================== IA, collisioni e util =================== */
+function addFloat(x,y,v,c){ state.floats.push({x,y,v,c,t:0}); }
+function addHit(x,y,c){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.2,-.2),life:rand(.25,.5),t:0,c}); }
+function hit(t,d){ if(!('hp' in t))return; t.hp-=d; const c=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-24,(d>=0?'-':'+')+Math.abs(d),c); addHit(t.x,t.y-6,c); sfx('hit'); }
+
+function nearest(u,towers,foes){
+  let best=null, score=1e9;
+  for(const f of foes){ const s=Math.abs(f.y*u.dir-u.y*u.dir)+Math.abs(f.x-u.x)*.25; if(s<score){score=s;best=f;} }
+  if(!best){ let tg=null, sm=1e9; for(const t of towers){ const s=Math.abs(t.y-u.y)+Math.abs(t.x-u.x)*.3; if(t.hp>0 && s<sm){sm=s; tg=t;} } best=tg; }
+  return {t:best, dist:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
 }
 
 let aiT=2.2;
@@ -71,164 +106,220 @@ function ai(dt){
     const m=Math.floor(state.mana), pool=[];
     if(m>=2) pool.push('spark'); if(m>=3) pool.push('scout'); if(m>=4) pool.push('tank');
     if(pool.length){
-      const t=pool[(Math.random()*pool.length)|0];
-      const cost=t==='tank'?4:t==='scout'?3:2;
-      state.mana=Math.max(0,state.mana-cost);
-      addUnit('E', (Math.random()*3)|0, t);
+      const tp=pool[(Math.random()*pool.length)|0];
+      const c=tp==='tank'?4:tp==='scout'?3:2;
+      state.mana=Math.max(0,state.mana-c);
+      addUnit('E',(Math.random()*3)|0,tp);
     }
   }
 }
 
-/* ====== Utility effetti ====== */
-function addFloat(x,y,v,c){ state.floats.push({x,y,v,c,t:0}); }
-function addHit(x,y,c){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.2,-.2),life:rand(.25,.5),t:0,c}); }
-function hit(t,d){ if(!('hp' in t))return; t.hp-=d; const c=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-24,(d>=0?'-':'+')+Math.abs(d),c); addHit(t.x,t.y-6,c); }
-
-function nearest(u,towers,foes){
-  let best=null,b=1e9;
-  for(const f of foes){ const d=Math.abs(f.y*u.dir-u.y*u.dir)+Math.abs(f.x-u.x)*.3; if(d<b){b=d;best=f;} }
-  if(!best){ let tg=null,dm=1e9; for(const t of towers){ const d=Math.abs(t.y-u.y)+Math.abs(t.x-u.x)*.4; if(t.hp>0 && d<dm){dm=d; tg=t;} } best=tg; }
-  return {t:best, dist:best?Math.hypot(best.x-u.x, best.y-u.y):1e9};
-}
-
-/* ====== Update ====== */
+/* =================== Update =================== */
 let last=performance.now();
 function step(dt){
-  if(!state.playing) return;
-  state.time+=dt; state.t+=dt;
-  state.mana=clamp(state.mana + state.manaRegen*60*dt, 0, state.manaMax);
-  ai(dt);
+  if(!state.playing){
+    // attesa tap su Riavvia (gestita dalla UI)
+  }else{
+    state.time += dt;
+    state.match.t += dt;
+    if(state.match.t>=state.match.len){ state.playing=false; sfx('lose'); }
 
-  for(const u of state.units){
-    const enemy = u.team==='P' ? 'E' : 'P';
-    const foes = state.units.filter(x=>x.team===enemy && x.col===u.col);
-    const towers = (enemy==='E'? state.enemyTowers : state.playerTowers).filter(t=>Math.abs(t.x-u.x)<W*0.3);
-    const {t, dist} = nearest(u, towers, foes);
-    u.cd-=dt;
-    if(t && dist<=u.range){ if(u.cd<=0){u.cd=u.rate; hit(t,u.atk);} }
-    else u.y += u.spd * u.dir * 60 * dt;
+    state.mana = clamp(state.mana + state.manaRegen*60*dt, 0, state.manaMax);
+    ai(dt);
+
+    for(const u of state.units){
+      const enemy = u.team==='P'?'E':'P';
+      const foes = state.units.filter(x=>x.team===enemy && x.col===u.col);
+      const towers = (enemy==='E'?state.enemyTowers:state.playerTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
+      const {t, dist} = nearest(u, towers, foes);
+      u.cd -= dt;
+      if(t && dist <= u.range){ if(u.cd<=0){u.cd=u.rate; hit(t,u.atk);} }
+      else u.y += u.spd * u.dir * 60 * dt;
+    }
+
+    state.units = state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
+
+    for(const f of state.floats){ f.t+=dt; f.y-=24*dt; }
+    state.floats = state.floats.filter(f=>f.t<.9);
+    for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.04; }
+    state.particles = state.particles.filter(p=>p.t<p.life);
+
+    const win = state.enemyTowers.every(t=>t.hp<=0);
+    const lose= state.playerTowers.every(t=>t.hp<=0);
+    if(win || lose){ state.playing=false; sfx(win?'win':'lose'); }
   }
-  state.units = state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
-
-  for(const f of state.floats){ f.t+=dt; f.y-=24*dt; }
-  state.floats = state.floats.filter(f=>f.t<.9);
-  for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.04; }
-  state.particles = state.particles.filter(p=>p.t<p.life);
-
-  const pAlive=state.playerTowers.some(t=>t.hp>0), eAlive=state.enemyTowers.some(t=>t.hp>0);
-  if(!pAlive || !eAlive) state.playing=false;
 }
 
-/* ====== Disegno (pulito) ====== */
-const CARDS=[
-  {label:'Scout (3)', type:'scout', cost:3},
-  {label:'Tank (4)',  type:'tank',  cost:4},
-  {label:'Spark (2)', type:'spark', cost:2},
-  {label:'Riavvia',   type:'restart', cost:0},
-];
-const cardRects=[];
-
+/* =================== Draw – estetica v2 =================== */
 function bg(){
-  // prato sfumato
+  // prato sfumato + grana
   const g=ctx.createLinearGradient(0,0,0,FIELD_H);
   g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#d9cf98');
   ctx.fillStyle=g; ctx.fillRect(0,0,W,FIELD_H);
 
-  // griglia leggera
-  ctx.strokeStyle='#00000010'; ctx.lineWidth=1; ctx.beginPath();
-  for(let y=0;y<=FIELD_H;y+=70){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
-  for(let x=0;x<=W;x+=90){ ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H); }
+  // griglia
+  ctx.strokeStyle='#00000012'; ctx.lineWidth=1; ctx.beginPath();
+  for(let y=0;y<=FIELD_H;y+=64){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
+  for(let x=0;x<=W;x+=80){ ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H); }
   ctx.stroke();
 
-  // fiume
-  ctx.fillStyle='#7bc6de'; ctx.fillRect(0,RIVER_Y-12,W,24);
-  // ponti
-  const bridge = cx => {
+  // corsie (linee sottili)
+  ctx.strokeStyle='#b9b083'; ctx.lineWidth=2;
+  for(const x of COL_X){ ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,FIELD_H-20); ctx.stroke(); }
+
+  // fiume con sfumatura
+  const rgrad=ctx.createLinearGradient(0,RIVER_Y-14,0,RIVER_Y+14);
+  rgrad.addColorStop(0,'#9adcf0'); rgrad.addColorStop(.5,'#7bc6de'); rgrad.addColorStop(1,'#64b7d4');
+  ctx.fillStyle=rgrad; ctx.fillRect(0,RIVER_Y-14,W,28);
+
+  // ponti con ombra
+  const bridge=cx=>{
     ctx.save(); ctx.translate(cx,RIVER_Y);
+    ctx.fillStyle='#0000002a'; ctx.beginPath(); ctx.ellipse(0,14,64,10,0,0,Math.PI*2); ctx.fill();
     ctx.fillStyle='#8c5a2c'; ctx.strokeStyle='#5e3c1c'; ctx.lineWidth=3;
-    ctx.fillRect(-60,-16,120,32); ctx.strokeRect(-60,-16,120,32);
+    ctx.fillRect(-64,-18,128,36); ctx.strokeRect(-64,-18,128,36);
     ctx.strokeStyle='#6d461f';
-    for(let i=-54;i<=54;i+=14){ ctx.beginPath(); ctx.moveTo(i,-16); ctx.lineTo(i,16); ctx.stroke(); }
+    for(let i=-58;i<=58;i+=14){ ctx.beginPath(); ctx.moveTo(i,-18); ctx.lineTo(i,18); ctx.stroke(); }
     ctx.restore();
   };
   bridge(W*0.3); bridge(W*0.7);
 
-  // colonne corsie
-  ctx.strokeStyle='#b6aa7c'; ctx.lineWidth=2;
-  for(const x of COL_X){ ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,FIELD_H-20); ctx.stroke(); }
+  // evidenzia corsia selezionata
+  if(selectedCol!=null){
+    ctx.fillStyle='#1a7fff18';
+    ctx.fillRect(COL_X[selectedCol]-W*0.16, 0, W*0.32, FIELD_H);
+  }
 }
-function tower(t, friendly){
-  // ombra
-  ctx.fillStyle='#00000022'; ctx.beginPath(); ctx.ellipse(t.x, t.y+10, 26, 8, 0, 0, Math.PI*2); ctx.fill();
-  // base
-  ctx.fillStyle=friendly?'#3b7ae0':'#d14f4f'; ctx.strokeStyle=friendly?'#17409e':'#8b2222'; ctx.lineWidth=3;
-  ctx.beginPath(); ctx.arc(t.x,t.y,24,0,Math.PI*2); ctx.fill(); ctx.stroke();
+
+function tower(t,friendly){
+  // base pietra + ombra
+  ctx.fillStyle='#00000022'; ctx.beginPath(); ctx.ellipse(t.x,t.y+12,28,9,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#b9c2cc'; ctx.strokeStyle='#8b97a5'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(t.x,t.y,26,0,Math.PI*2); ctx.fill(); ctx.stroke();
+
+  // colore squadra
+  ctx.fillStyle=friendly?'#3b7ae0':'#d14f4f';
+  ctx.beginPath(); ctx.arc(t.x,t.y,20,0,Math.PI*2); ctx.fill();
+
   // corona
   ctx.fillStyle='#f4cd63'; ctx.strokeStyle='#9a7b1a';
-  ctx.beginPath(); ctx.moveTo(t.x-16,t.y-22); ctx.lineTo(t.x-6,t.y-8); ctx.lineTo(t.x+6,t.y-22); ctx.lineTo(t.x+16,t.y-8); ctx.lineTo(t.x+16,t.y-2); ctx.lineTo(t.x-16,t.y-2); ctx.closePath(); ctx.fill(); ctx.stroke();
-  // hp
-  const w=70,h=8; ctx.fillStyle='#00000055'; ctx.fillRect(t.x-w/2,t.y-34,w,h);
-  ctx.fillStyle='#4ee46a'; ctx.fillRect(t.x-w/2,t.y-34, w*clamp(t.hp/t.max,0,1), h);
+  ctx.beginPath(); ctx.moveTo(t.x-15,t.y-20); ctx.lineTo(t.x-5,t.y-6); ctx.lineTo(t.x+5,t.y-20);
+  ctx.lineTo(t.x+15,t.y-6); ctx.lineTo(t.x+15,t.y-2); ctx.lineTo(t.x-15,t.y-2); ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  // bandierina (leggera oscillazione)
+  const sway = Math.sin(state.time*2 + t.x)*3;
+  ctx.fillStyle=friendly?'#6fe0ff':'#ffd46f';
+  ctx.beginPath(); ctx.moveTo(t.x+20,t.y-10);
+  ctx.lineTo(t.x+20+16+sway, t.y-16);
+  ctx.lineTo(t.x+20, t.y-22);
+  ctx.closePath(); ctx.fill();
+
+  // barra HP
+  const w=72,h=8;
+  ctx.fillStyle='#00000055'; ctx.fillRect(t.x-w/2,t.y-36,w,h);
+  ctx.fillStyle='#4ee46a'; ctx.fillRect(t.x-w/2,t.y-36, w*clamp(t.hp/t.max,0,1), h);
 }
-function unit(u){
-  ctx.fillStyle='#00000025'; ctx.beginPath(); ctx.ellipse(u.x, u.y+8, 16, 6, 0, 0, Math.PI*2); ctx.fill();
-  if(u.team==='P'){ ctx.fillStyle='#2f80ed'; ctx.strokeStyle='#0b4ea2'; }
-  else { ctx.fillStyle='#eb5757'; ctx.strokeStyle='#9b1c1c'; }
+
+function drawUnit(u){
+  // ombra
+  ctx.fillStyle='#00000025'; ctx.beginPath(); ctx.ellipse(u.x,u.y+8,16,6,0,0,Math.PI*2); ctx.fill();
+  // corpo
+  if(u.team==='P'){ ctx.strokeStyle='#0b4ea2'; ctx.fillStyle='#2f80ed'; }
+  else { ctx.strokeStyle='#9b1c1c'; ctx.fillStyle='#eb5757'; }
   ctx.lineWidth=2;
+
   if(u.type==='tank'){ ctx.fillRect(u.x-16,u.y-12,32,24); ctx.strokeRect(u.x-16,u.y-12,32,24); }
   else if(u.type==='scout'){ ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke(); }
-  else { ctx.beginPath(); ctx.moveTo(u.x-14,u.y+10); ctx.lineTo(u.x+14,u.y+10); ctx.lineTo(u.x,u.y-12); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+  else { // spark (triangolo con bagliore)
+    const grd=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,16);
+    grd.addColorStop(0,'#fffacd'); grd.addColorStop(1, (u.team==='P')?'#2f80ed':'#eb5757');
+    ctx.fillStyle=grd;
+    ctx.beginPath(); ctx.moveTo(u.x-14,u.y+10); ctx.lineTo(u.x+14,u.y+10); ctx.lineTo(u.x,u.y-12); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle=(u.team==='P')?'#0b4ea2':'#9b1c1c'; ctx.stroke();
+  }
   // barra hp
   const maxhp=u.type==='tank'?60:u.type==='scout'?16:12;
   ctx.fillStyle='#00000055'; ctx.fillRect(u.x-12,u.y-20,24,4);
   ctx.fillStyle='#4ee46a'; ctx.fillRect(u.x-12,u.y-20,24*clamp(u.hp/maxhp,0,1),4);
 }
-function ui(){
-  // pannello
-  ctx.fillStyle='#0f1115'; ctx.fillRect(0,FIELD_H, W, UI_H);
+
+function drawUI(){
+  // pannello scuro
+  ctx.fillStyle='#0f1115'; ctx.fillRect(0,FIELD_H,W,UI_H);
+
+  // timer in alto al campo
+  const topBar=16;
+  const rem=Math.max(0, state.match.len - state.match.t);
+  const p=clamp(state.match.t/state.match.len,0,1);
+  ctx.fillStyle='#122034'; ctx.fillRect(16, topBar, W-32, 10);
+  ctx.fillStyle='#61dafb'; ctx.fillRect(16, topBar, (W-32)*p, 10);
+  ctx.fillStyle='#cde7ff'; ctx.font='bold 16px system-ui'; ctx.textAlign='right';
+  ctx.fillText(Math.ceil(rem)+'s', W-20, topBar-4+14);
+
   // mana
   ctx.fillStyle='#202a3a'; ctx.fillRect(24, FIELD_H+16, W-48, 14);
   ctx.fillStyle='#61dafb'; ctx.fillRect(24, FIELD_H+16, (W-48)*(state.mana/state.manaMax), 14);
 
-  // pulsanti
+  // pulsanti grandi
   cardRects.length=0;
-  const gap=18, w=(W-48-gap*(CARDS.length-1))/CARDS.length, h=66, y=FIELD_H+42; let x=24;
+  const gap=18, h=66, y=FIELD_H+42;
+  const cards=[
+    {label:'Scout (3)', type:'scout', cost:3},
+    {label:'Tank (4)',  type:'tank',  cost:4},
+    {label:'Spark (2)', type:'spark', cost:2},
+    {label:'Riavvia',   type:'restart', cost:0},
+  ];
+  const w=(W-48-gap*(cards.length-1))/cards.length; let x=24;
   ctx.font='600 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  for(const c of CARDS){
-    const enabled = (c.type==='restart') || (state.mana>=c.cost && state.playing);
+  for(const c of cards){
+    const enabled = c.type==='restart' || (state.mana>=c.cost && state.playing);
     ctx.fillStyle = enabled ? '#1b2330' : '#121821';
     ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2;
-    // pulsante con angoli morbidi
     const r=14; ctx.beginPath();
     ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
     ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
     ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
     ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
     ctx.fill(); ctx.stroke();
-    // label
-    ctx.fillStyle = enabled ? '#eef' : '#8893a8';
+
+    ctx.fillStyle = enabled ? '#eef' : '#8b96aa';
     ctx.fillText(c.label, x+w/2, y+h/2);
-    cardRects.push({x, y, w, h, ...c});
-    x += w + gap;
+
+    cardRects.push({x,y,w,h,...c});
+    x+=w+gap;
   }
+
+  // overlay vittoria/sconfitta
+  if(!state.playing){
+    ctx.fillStyle='#00000080'; ctx.fillRect(0,0,W,FIELD_H);
+    ctx.fillStyle='#fff'; ctx.font='bold 38px system-ui'; ctx.textAlign='center';
+    const win = state.enemyTowers.every(t=>t.hp<=0);
+    ctx.fillText(win?'🏆 Vittoria!':'💀 Sconfitta', W/2, FIELD_H/2);
+    ctx.font='18px system-ui'; ctx.fillText('Tocca "Riavvia" per giocare ancora', W/2, FIELD_H/2+40);
+  }
+
+  // suggerimento corsia
+  ctx.fillStyle='#9fb6ffcc'; ctx.font='14px system-ui'; ctx.textAlign='center';
+  ctx.fillText('Tocca il campo per scegliere la corsia', W/2, FIELD_H-10);
 }
 
-/* ====== Loop ====== */
+/* =================== Loop =================== */
+const cardRects=[]; // popolata in drawUI()
 function draw(){
-  // letterbox esterno
+  // letterbox
   ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0f1115'; ctx.fillRect(0,0,canvas.width,canvas.height);
-  // mapping logico
   ctx.setTransform(scale,0,0,scale,offX,offY);
 
   bg();
   state.playerTowers.forEach(t=>tower(t,true));
   state.enemyTowers.forEach(t=>tower(t,false));
-  for(const u of state.units) unit(u);
+  for(const u of state.units) drawUnit(u);
 
+  // floats e particles
   for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.c; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
   for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.c; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
 
-  ui();
+  drawUI();
 }
 function loop(ts){
   const dt=Math.min(0.033,(ts-last)/1000); last=ts;
@@ -236,23 +327,35 @@ function loop(ts){
 }
 requestAnimationFrame(loop);
 
-/* ====== Input robusto (pointerdown) ====== */
+/* =================== Input: corsia + pulsanti =================== */
 canvas.addEventListener('pointerdown', (e)=>{
   e.preventDefault();
-  const {x,y}=toLogical(e);
-  // click pulsanti
+  const {x,y} = toLogical(e);
+
+  // se tocco nel CAMPO → cambio corsia
+  if(y < FIELD_H){
+    let nearest=0, best=1e9;
+    for(let i=0;i<COL_X.length;i++){
+      const d=Math.abs(x-COL_X[i]);
+      if(d<best){best=d; nearest=i;}
+    }
+    selectedCol = nearest;
+    return;
+  }
+  // pulsanti
   for(const r of cardRects){
     if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
       if(r.type==='restart'){
-        state.playing=true; state.mana=5; state.units.length=0;
+        state.playing=true; state.mana=5; state.units.length=0; state.time=0; state.match.t=0;
         state.playerTowers.forEach(t=>t.hp=t.max);
         state.enemyTowers.forEach(t=>t.hp=t.max);
         return;
-      }else if(state.playing && state.mana>=r.cost){
-        addUnit('P', Math.floor(state.time*2)%3, r.type);
-        state.mana = Math.max(0, state.mana-r.cost);
-        return;
       }
+      if(state.playing && state.mana>=r.cost){
+        addUnit('P', selectedCol ?? 1, r.type);
+        state.mana = Math.max(0, state.mana - r.cost);
+      }
+      return;
     }
   }
 },{passive:false});
