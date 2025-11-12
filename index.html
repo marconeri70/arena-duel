@@ -3,16 +3,78 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Arena Vertical – v3 (real look + proiettili + torri che sparano)</title>
+<title>Arena Vertical – v4 (Progressi + Mazzo)</title>
 <style>
-  html,body{margin:0;height:100%;background:#0f1115;}
+  html,body{margin:0;height:100%;background:#0f1115;font-family:system-ui,Segoe UI,Roboto,Arial;}
   canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none; -webkit-tap-highlight-color:transparent;}
+  /* Overlay UI (home/deck) */
+  .overlay{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:auto;}
+  .panel{width:min(720px,92vw); max-height:90vh; overflow:auto; background:rgba(15,17,21,.96); border:1px solid #2c3c54; border-radius:16px; padding:16px; color:#eef; box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+  .cardBtn{flex:1 1 120px; min-width:130px; background:#1b2330; border:1px solid #2c3c54; border-radius:12px; padding:10px; cursor:pointer; text-align:center}
+  .cardBtn.lock{opacity:.5; filter:grayscale(.6); cursor:not-allowed}
+  .tag{font-size:12px; opacity:.8}
+  .deckSlots{display:flex; gap:12px; margin:8px 0}
+  .slot{flex:1 1 0; min-width:0; background:#121821; border:1px dashed #2c3c54; color:#9fb3d1; border-radius:12px; padding:12px; text-align:center}
+  .slot.filled{border-style:solid; color:#eef; background:#1b2330}
+  .btn{background:#1b2330; color:#eef; border:1px solid #2c3c54; border-radius:12px; padding:10px 14px; cursor:pointer}
+  .btn.primary{background:#2f80ed; border-color:#0b4ea2}
+  .btn.ghost{background:transparent}
+  .spacer{flex:1}
+  .progressBar{height:10px; background:#222b3a; border-radius:8px; overflow:hidden}
+  .progressFill{height:100%; background:linear-gradient(90deg,#45d,#7af); width:0%}
+  .unlock{padding:10px; border-radius:10px; background:#112436; border:1px solid #2c3c54; margin:8px 0}
+  .small{font-size:13px; opacity:.85}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+
+<!-- Overlay HOME/DECK -->
+<div id="homeUI" class="overlay" style="display:none">
+  <div class="panel">
+    <div class="row" style="justify-content:space-between; align-items:flex-start">
+      <div>
+        <div style="font-weight:700; font-size:20px">Arena Vertical</div>
+        <div class="small">Versione v4 – Progressi &amp; Mazzo</div>
+      </div>
+      <button class="btn ghost" id="closeHome" title="Chiudi">✖</button>
+    </div>
+
+    <div style="margin:12px 0">
+      <div class="small">Trofei: <b id="trofeiVal">0</b> / <span id="trofeoNext">3</span></div>
+      <div class="progressBar"><div id="trofeiBar" class="progressFill"></div></div>
+    </div>
+
+    <div class="unlock">
+      <div style="font-weight:600;margin-bottom:6px">Traguardi &amp; sblocchi</div>
+      <div class="small">
+        • 3 trofei → <b>Rogue</b> • 6 → <b>Mage</b> • 10 → <b>Guardian</b> • 15 → <b>Bomber</b>
+      </div>
+    </div>
+
+    <div style="margin:12px 0;">
+      <div style="font-weight:600;margin-bottom:6px">Carte disponibili</div>
+      <div id="cardPool" class="row"></div>
+    </div>
+
+    <div style="margin:12px 0;">
+      <div style="font-weight:600;margin-bottom:6px">Il tuo mazzo (4 carte)</div>
+      <div id="deckSlots" class="deckSlots"></div>
+      <div class="small">Tocca una carta per aggiungerla; tocca uno slot per rimuoverla.</div>
+    </div>
+
+    <div class="row" style="margin-top:12px; align-items:center">
+      <button id="clearDeck" class="btn">Svuota mazzo</button>
+      <div class="spacer"></div>
+      <button id="saveDeck" class="btn">Salva</button>
+      <button id="playBtn" class="btn primary">Gioca ▶</button>
+    </div>
+  </div>
+</div>
+
 <script>
-/* ================= Canvas & mapping (portrait) ================= */
+/* ================= Canvas & mapping ================= */
 const canvas=document.getElementById('game');
 const ctx=canvas.getContext('2d',{alpha:false});
 const W=720,H=1280,UI_H=200,FIELD_H=H-UI_H;
@@ -33,7 +95,7 @@ function toLogical(ev){
   return {x:(X-offX)/scale, y:(Y-offY)/scale};
 }
 
-/* ================= Helpers & textures (v3 visuals) ================= */
+/* ================= Helpers & textures ================= */
 const rand=(a,b)=>a+Math.random()*(b-a);
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
 
@@ -43,21 +105,14 @@ function makePattern(fillFn,w=128,h=128){
   const g=c.getContext('2d'); fillFn(g,w,h); return g.createPattern(c,'repeat');
 }
 function buildTextures(){
-  // Erba
   tex.grass = makePattern((g,w,h)=>{
-    const grd=g.createLinearGradient(0,0,0,h);
-    grd.addColorStop(0,'#eae3b4'); grd.addColorStop(1,'#d7cd91');
+    const grd=g.createLinearGradient(0,0,0,h); grd.addColorStop(0,'#eae3b4'); grd.addColorStop(1,'#d7cd91');
     g.fillStyle=grd; g.fillRect(0,0,w,h);
-    for(let i=0;i<900;i++){
-      const a=0.04+Math.random()*0.05; g.fillStyle=`rgba(90,80,40,${a})`;
-      g.fillRect(Math.random()*w,Math.random()*h,1,1);
-    }
+    for(let i=0;i<900;i++){ const a=0.04+Math.random()*0.05; g.fillStyle=`rgba(90,80,40,${a})`; g.fillRect(Math.random()*w,Math.random()*h,1,1); }
   });
-  // Sabbia sponda
   tex.dirt = makePattern((g,w,h)=>{
     g.fillStyle='#cfae7a'; g.fillRect(0,0,w,h);
-    for(let i=0;i<600;i++){
-      g.fillStyle=`rgba(90,50,30,${0.05+Math.random()*0.07})`;
+    for(let i=0;i<600;i++){ g.fillStyle=`rgba(90,50,30,${0.05+Math.random()*0.07})`;
       g.beginPath(); g.arc(Math.random()*w,Math.random()*h,Math.random()*1.2,0,Math.PI*2); g.fill();
     }
   });
@@ -69,17 +124,131 @@ function softShadow(x,y,rx,ry,alpha=0.22){
   ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); ctx.fill(); ctx.restore();
 }
 
-/* ================== Stato di gioco ================== */
+/* ================== Progressi & Mazzo ================== */
+const STORAGE_KEY='arena_progress_v4';
+const MILESTONES=[ {need:3, card:'rogue'}, {need:6, card:'mage'}, {need:10,card:'guardian'}, {need:15,card:'bomber'} ];
+
+const CARDS_MASTER={
+  scout:{name:'Scout', cost:3, type:'scout', desc:'Meleè veloce', base:true},
+  tank:{name:'Tank', cost:4, type:'tank', desc:'Meleè resistente', base:true},
+  spark:{name:'Spark', cost:2, type:'spark', desc:'Ranged veloce', base:true},
+  healer:{name:'Healer', cost:3, type:'healer', desc:'Cura alleati', base:true},
+  rogue:{name:'Rogue', cost:3, type:'rogue', desc:'Assalto rapido', base:false},
+  mage:{name:'Mage', cost:4, type:'mage', desc:'Ranged potente', base:false},
+  guardian:{name:'Guardian', cost:5, type:'guardian', desc:'Tank d\'élite', base:false},
+  bomber:{name:'Bomber', cost:4, type:'bomber', desc:'Danni ad area', base:false}
+};
+
+function loadProgress(){
+  try{
+    const raw=localStorage.getItem(STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch{}
+  // default
+  return {
+    trophies:0,
+    unlocked:Object.keys(CARDS_MASTER).filter(k=>CARDS_MASTER[k].base), // base 4
+    deck:['scout','tank','spark','healer'] // default
+  };
+}
+function saveProgress(p){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(p)); }catch{} }
+
+let PROG=loadProgress();
+
+/* ======= Overlay Home/Deck ======= */
+const homeUI=document.getElementById('homeUI');
+const trofeiVal=document.getElementById('trofeiVal');
+const trofeiBar=document.getElementById('trofeiBar');
+const trofeoNext=document.getElementById('trofeoNext');
+const cardPoolDiv=document.getElementById('cardPool');
+const deckSlotsDiv=document.getElementById('deckSlots');
+const btnSaveDeck=document.getElementById('saveDeck');
+const btnClearDeck=document.getElementById('clearDeck');
+const btnPlay=document.getElementById('playBtn');
+const btnCloseHome=document.getElementById('closeHome');
+
+function nextMilestoneNeed(){
+  for(const m of MILESTONES){ if(PROG.trophies < m.need) return m.need; }
+  return PROG.trophies; // maxed
+}
+function refreshHome(){
+  trofeiVal.textContent=PROG.trophies;
+  trofeoNext.textContent=nextMilestoneNeed();
+  const prevNeed = MILESTONES.find(m=>m.need>PROG.trophies)?.need ?? PROG.trophies || 1;
+  const lastNeed = [...MILESTONES].reverse().find(m=>m.need<=PROG.trophies)?.need || 0;
+  const span = Math.max(1, prevNeed - lastNeed);
+  const fill = Math.max(0, Math.min(1, (PROG.trophies - lastNeed)/span))*100;
+  trofeiBar.style.width = fill.toFixed(2)+'%';
+
+  // pool
+  cardPoolDiv.innerHTML='';
+  Object.entries(CARDS_MASTER).forEach(([key,c])=>{
+    const unlocked = PROG.unlocked.includes(key);
+    const el=document.createElement('button');
+    el.className='cardBtn'+(unlocked?'':' lock');
+    el.innerHTML=`<div style="font-weight:700">${c.name} (${c.cost})</div><div class="tag">${c.desc}</div>`;
+    el.title = unlocked? 'Tocca per aggiungere al mazzo' : 'Bloccata';
+    el.onclick=()=>{
+      if(!unlocked) return;
+      addToDeck(key);
+      renderDeckSlots();
+    };
+    cardPoolDiv.appendChild(el);
+  });
+
+  // deck slots
+  renderDeckSlots();
+}
+function renderDeckSlots(){
+  deckSlotsDiv.innerHTML='';
+  for(let i=0;i<4;i++){
+    const k = PROG.deck[i];
+    const filled = !!k;
+    const el=document.createElement('div');
+    el.className='slot'+(filled?' filled':'');
+    el.innerHTML = filled ? `<div style="font-weight:700">${CARDS_MASTER[k].name} (${CARDS_MASTER[k].cost})</div><div class="tag">${CARDS_MASTER[k].desc}</div>` : '— vuoto —';
+    el.onclick=()=>{ // remove
+      PROG.deck[i]=null; saveProgress(PROG); renderDeckSlots();
+    };
+    deckSlotsDiv.appendChild(el);
+  }
+}
+function addToDeck(cardKey){
+  // trova primo slot libero o sostituisci il meno recente
+  const idx = PROG.deck.findIndex(x=>!x);
+  if(idx>=0) PROG.deck[idx]=cardKey;
+  else{
+    // se già presente non fare nulla, altrimenti rimpiazza il primo
+    if(PROG.deck.includes(cardKey)) return;
+    PROG.deck[0]=cardKey;
+  }
+  saveProgress(PROG);
+}
+btnClearDeck.onclick=()=>{ PROG.deck=[null,null,null,null]; saveProgress(PROG); renderDeckSlots(); };
+btnSaveDeck.onclick =()=>{ // pulisci eventuali null finali
+  PROG.deck = PROG.deck.filter(Boolean).slice(0,4);
+  while(PROG.deck.length<4) PROG.deck.push(null);
+  saveProgress(PROG);
+};
+btnPlay.onclick=()=>{
+  // serve almeno 1 carta
+  const count=PROG.deck.filter(Boolean).length;
+  if(count===0){ alert('Aggiungi almeno 1 carta al mazzo.'); return; }
+  homeUI.style.display='none';
+  startMatchWithDeck();
+};
+btnCloseHome.onclick=()=>{ homeUI.style.display='none'; };
+
+/* ====== Stato di gioco ====== */
 const COL_X=[W*0.18, W*0.5, W*0.82];
 const RIVER_Y=FIELD_H*0.5;
 let selectedCol=1, last=performance.now(), showHelp=false, notEnoughManaBlink=0;
 
 const state={
   manaP:5, manaE:5, manaMax:10, manaRegen:0.016,
-  time:0, playing:true,
+  time:0, playing:false, // parte da HOME
   match:{t:0,len:120},
   crowns:{you:0, enemy:0},
-  // Torri: aggiungo raggio/rate/cd (e un piccolo offset di bocca da fuoco)
   playerTowers:[
     {x:W*0.25,y:FIELD_H-95,hp:100,max:100, range:150, rate:1.0, cd:0, muzzle:{x:10,y:-18}},
     {x:W*0.75,y:FIELD_H-95,hp:100,max:100, range:150, rate:1.0, cd:0, muzzle:{x:10,y:-18}}
@@ -88,15 +257,16 @@ const state={
     {x:W*0.25,y:95,hp:100,max:100, range:150, rate:1.0, cd:0, muzzle:{x:10,y:-18}},
     {x:W*0.75,y:95,hp:100,max:100, range:150, rate:1.0, cd:0, muzzle:{x:10,y:-18}}
   ],
-  units:[], floats:[], particles:[], projectiles:[]
+  units:[], floats:[], particles:[], projectiles:[],
+  cardsUI:[] // popolato da deck
 };
 
-/* ================== SFX minimi ================== */
+/* ================== SFX ================== */
 let ac;
 function sfx(kind){ try{
   ac=ac||new (window.AudioContext||window.webkitAudioContext)();
   const o=ac.createOscillator(), g=ac.createGain();
-  const map={hit:[220,.05,'square'], place:[660,.06,'square'], win:[880,.35,'triangle'], lose:[160,.35,'triangle'], heal:[520,.07,'sine'], shoot:[780,.05,'triangle'], t_shoot:[520,.06,'square']};
+  const map={hit:[220,.05,'square'], place:[660,.06,'square'], win:[880,.35,'triangle'], lose:[160,.35,'triangle'], heal:[520,.07,'sine'], shoot:[780,.05,'triangle'], t_shoot:[520,.06,'square'], unlock:[980,.25,'sawtooth']};
   const [f,t,w]=(map[kind]||[440,.08,'square']); o.type=w; o.frequency.value=f; g.gain.value=.06;
   o.connect(g); g.connect(ac.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime+t); o.stop(ac.currentTime+t);
 }catch{} }
@@ -108,24 +278,36 @@ function damage(t,d){ if(!('hp'in t))return; t.hp-=d; const c=d>=0?'#ffb36a':'#6
 function heal(t,a){ if(!('hp'in t))return; const b=t.hp; t.hp=Math.min(t.max,t.hp+a); if(t.hp>b){ addFloat(t.x,t.y-24,'+'+Math.round(t.hp-b),'#6afc86'); sfx('heal'); }}
 
 /* ================== Unità & Proiettili ================== */
+function unitStats(type){
+  // Base 4 già noti; aggiunte nuove 4 carte
+  switch(type){
+    case 'scout':   return {spd:1.2,hp:16,atk:3,range:22,rate:.5, kind:'melee'};
+    case 'tank':    return {spd:.7,hp:60,atk:6,range:26,rate:1.0, kind:'melee'};
+    case 'spark':   return {spd:.9,hp:12,atk:8,range:120,rate:.9, kind:'ranged'};
+    case 'healer':  return {spd:1.0,hp:18,atk:-6,range:90,rate:1.0, kind:'heal'};
+    case 'rogue':   return {spd:1.4,hp:14,atk:5,range:26,rate:.6, kind:'melee'};          // assalto rapido
+    case 'mage':    return {spd:.9,hp:14,atk:11,range:140,rate:1.1, kind:'ranged'};       // colpo forte
+    case 'guardian':return {spd:.6,hp:85,atk:7,range:28,rate:1.0, kind:'melee'};          // super tank
+    case 'bomber':  return {spd:.85,hp:18,atk:9,range:115,rate:1.2, kind:'ranged_aoe'};   // area
+  }
+  return {spd:1,hp:12,atk:4,range:24,rate:1.0, kind:'melee'};
+}
 function addUnit(team,col,type){
+  const s=unitStats(type);
   const x=COL_X[col], y=(team==='P')?FIELD_H-140:140, dir=(team==='P')?-1:1;
-  const u={team,x,y,dir,col,type,cd:0,maxhp:1,hp:1,spd:1,atk:1,range:24,rate:1};
-  if(type==='scout') Object.assign(u,{spd:1.2,hp:16,maxhp:16,atk:3,range:22,rate:.5});         // melee veloce
-  else if(type==='tank') Object.assign(u,{spd:.7,hp:60,maxhp:60,atk:6,range:26,rate:1.0});     // melee resistente
-  else if(type==='spark') Object.assign(u,{spd:.9,hp:12,maxhp:12,atk:8,range:120,rate:0.9});   // ranged
-  else if(type==='healer') Object.assign(u,{spd:1.0,hp:18,maxhp:18,atk:-6,range:90,rate:1.0}); // ranged cura
+  const u={team,x,y,dir,col,type,cd:0,maxhp:s.hp,hp:s.hp,spd:s.spd,atk:s.atk,range:s.range,rate:s.rate,kind:s.kind};
   state.units.push(u); sfx('place');
 }
 
 function fireProjectile({x,y}, target, opts){
-  // opts: {team, heal:false, dmg:8, speed:420, colorA, colorB, kind:'unit'|'tower'}
+  // opts: {team, heal:false, dmg:8, speed:420, colorA, colorB, kind:'unit'|'tower', aoe:false, aoeR:24}
   const dx=target.x - x, dy=target.y - y, L=Math.hypot(dx,dy)||1;
   const vx = (dx/L) * (opts.speed||420);
   const vy = (dy/L) * (opts.speed||420);
   state.projectiles.push({
     x, y, vx, vy, team:opts.team, heal:opts.heal||false, dmg:opts.dmg||8, life:1.5,
-    colorA:opts.colorA||'#fffacd', colorB:opts.colorB||'#7fb6ff', from:opts.kind||'unit'
+    colorA:opts.colorA||'#fffacd', colorB:opts.colorB||'#7fb6ff', from:opts.kind||'unit',
+    aoe: !!opts.aoe, aoeR: opts.aoeR||24
   });
   sfx(opts.kind==='tower' ? 't_shoot' : 'shoot');
 }
@@ -137,11 +319,16 @@ function ai(dt){
   if(aiT<=0 && state.playing){
     aiT=rand(1.3,2.5);
     const m=Math.floor(state.manaE), pool=[];
-    if(m>=2) pool.push('spark'); if(m>=3) pool.push('scout','healer'); if(m>=4) pool.push('tank');
+    if(m>=2) pool.push('spark');
+    if(m>=3) pool.push('scout','healer','rogue');
+    if(m>=4) pool.push('tank','bomber','mage');
+    if(m>=5) pool.push('guardian');
     if(pool.length){
       const tp=pool[(Math.random()*pool.length)|0];
-      const cost=tp==='tank'?4:(tp==='scout'||tp==='healer'?3:2);
-      state.manaE=Math.max(0, state.manaE-cost);
+      const cost = Object.entries(CARDS_MASTER).find(([k])=>CARDS_MASTER[k].type===tp) ? null : null; // non usiamo
+      const costMap={spark:2,scout:3,healer:3,rogue:3,tank:4,bomber:4,mage:4,guardian:5};
+      const c=costMap[tp]||3;
+      state.manaE=Math.max(0, state.manaE-c);
       addUnit('E', (Math.random()*3)|0, tp);
     }
   }
@@ -156,46 +343,25 @@ function nearest(u,towers,foes){
 }
 
 function towerAI(dt){
-  // Torri giocatore → sparano a unità nemiche nel raggio sopra di loro
   for(const tw of state.playerTowers){
-    tw.cd -= dt;
-    if(tw.hp<=0) continue;
-    // unità nemiche sopra la torre (y < torre.y), nel raggio
+    tw.cd -= dt; if(tw.hp<=0) continue;
     let target=null, best=1e9;
-    for(const u of state.units.filter(u=>u.team==='E')){
-      if(u.y >= tw.y) continue; // solo verso l'alto
-      const d=Math.hypot(u.x-tw.x, u.y-tw.y);
-      if(d<tw.range && d<best){ best=d; target=u; }
-    }
+    for(const u of state.units.filter(u=>u.team==='E')){ if(u.y >= tw.y){ const d=Math.hypot(u.x-tw.x, u.y-tw.y); if(d<tw.range && d<best){ best=d; target=u; } } }
     if(target && tw.cd<=0){
       tw.cd=tw.rate;
-      // punto di fuoco (muzzle) spostato di poco
-      const mx=tw.x + (tw.muzzle?.x||0);
-      const my=tw.y + (tw.muzzle?.y||0);
-      fireProjectile({x:mx,y:my}, target, {
-        team:'P', heal:false, dmg:7, speed:540, colorA:'#a8c9ff', colorB:'#7fb6ff', kind:'tower'
-      });
-      // bagliore museruola
+      const mx=tw.x + (tw.muzzle?.x||0), my=tw.y + (tw.muzzle?.y||0);
+      fireProjectile({x:mx,y:my}, target, {team:'P', heal:false, dmg:7, speed:540, colorA:'#a8c9ff', colorB:'#7fb6ff', kind:'tower'});
       addHit(mx,my,'#9ec9ff');
     }
   }
-  // Torri nemiche → sparano a unità del giocatore nel raggio sotto di loro
   for(const tw of state.enemyTowers){
-    tw.cd -= dt;
-    if(tw.hp<=0) continue;
+    tw.cd -= dt; if(tw.hp<=0) continue;
     let target=null, best=1e9;
-    for(const u of state.units.filter(u=>u.team==='P')){
-      if(u.y <= tw.y) continue; // solo verso il basso
-      const d=Math.hypot(u.x-tw.x, u.y-tw.y);
-      if(d<tw.range && d<best){ best=d; target=u; }
-    }
+    for(const u of state.units.filter(u=>u.team==='P')){ if(u.y <= tw.y){ const d=Math.hypot(u.x-tw.x, u.y-tw.y); if(d<tw.range && d<best){ best=d; target=u; } } }
     if(target && tw.cd<=0){
       tw.cd=tw.rate;
-      const mx=tw.x + (tw.muzzle?.x||0);
-      const my=tw.y + (tw.muzzle?.y||0);
-      fireProjectile({x:mx,y:my}, target, {
-        team:'E', heal:false, dmg:7, speed:540, colorA:'#ffc1c1', colorB:'#ff9b9b', kind:'tower'
-      });
+      const mx=tw.x + (tw.muzzle?.x||0), my=tw.y + (tw.muzzle?.y||0);
+      fireProjectile({x:mx,y:my}, target, {team:'E', heal:false, dmg:7, speed:540, colorA:'#ffc1c1', colorB:'#ff9b9b', kind:'tower'});
       addHit(mx,my,'#ffc1c1');
     }
   }
@@ -204,11 +370,10 @@ function towerAI(dt){
 function step(dt){
   if(state.playing){
     state.match.t+=dt; state.time+=dt;
-    if(state.match.t>=state.match.len){ state.playing=false; sfx('lose'); }
+    if(state.match.t>=state.match.len){ endMatch(false); }
     state.manaP = clamp(state.manaP + state.manaRegen*60*dt, 0, state.manaMax);
     state.manaE = clamp(state.manaE + state.manaRegen*60*dt, 0, state.manaMax);
-    ai(dt);
-    towerAI(dt);
+    ai(dt); towerAI(dt);
   }
 
   // Unità
@@ -220,35 +385,26 @@ function step(dt){
     const allyT = (u.team==='P'?state.playerTowers:state.enemyTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
     u.cd-=dt;
 
-    if(u.type==='healer'){
-      // ranged cura
+    if(u.kind==='heal'){
       let tgt=null, bestGap=0;
-      for(const a of allies){
-        const gap=a.maxhp-a.hp, d=Math.hypot(a.x-u.x,a.y-u.y);
-        if(gap>bestGap && d<=u.range){ bestGap=gap; tgt=a; }
-      }
-      for(const t of allyT){
-        const gap=t.max-t.hp, d=Math.hypot(t.x-u.x,t.y-u.y);
-        if(gap>bestGap && d<=u.range){ bestGap=gap; tgt=t; }
-      }
-      if(tgt && u.cd<=0){
-        u.cd=u.rate;
-        fireProjectile(u, tgt, {team:u.team, heal:true, dmg:Math.abs(u.atk), speed:360, colorA:'#a8f5b0', colorB:'#2bd96a'});
-      }else{
-        u.y += u.spd * u.dir * 60 * dt;
-      }
-    } else if(u.type==='spark'){
+      for(const a of allies){ const gap=a.maxhp-a.hp, d=Math.hypot(a.x-u.x,a.y-u.y); if(gap>bestGap && d<=u.range){ bestGap=gap; tgt=a; } }
+      for(const t of allyT){ const gap=t.max-t.hp, d=Math.hypot(t.x-u.x,t.y-u.y); if(gap>bestGap && d<=u.range){ bestGap=gap; tgt=t; } }
+      if(tgt && u.cd<=0){ u.cd=u.rate; fireProjectile(u, tgt, {team:u.team, heal:true, dmg:Math.abs(u.atk), speed:360, colorA:'#a8f5b0', colorB:'#2bd96a'}); }
+      else u.y += u.spd * u.dir * 60 * dt;
+
+    } else if(u.kind==='ranged' || u.kind==='ranged_aoe'){
       const {t,dist}=nearest(u,towers,foes);
       if(t && dist<=u.range){
-        if(u.cd<=0){
-          u.cd=u.rate;
-          fireProjectile(u, t, {team:u.team, heal:false, dmg:u.atk, speed:520, colorA:'#fffacd', colorB:(u.team==='P')?'#7fb6ff':'#ff9b9b'});
+        if(u.cd<=0){ u.cd=u.rate;
+          fireProjectile(u, t, {
+            team:u.team, heal:false, dmg:u.atk, speed:520,
+            colorA:'#fffacd', colorB:(u.team==='P')?'#7fb6ff':'#ff9b9b',
+            aoe: u.kind==='ranged_aoe', aoeR:26
+          });
         }
-      } else {
-        u.y += u.spd * u.dir * 60 * dt;
-      }
-    } else {
-      // melee
+      } else u.y += u.spd * u.dir * 60 * dt;
+
+    } else { // melee
       const {t,dist}=nearest(u,towers,foes);
       if(t && dist<=u.range){ if(u.cd<=0){u.cd=u.rate; damage(t,u.atk);} }
       else u.y += u.spd * u.dir * 60 * dt;
@@ -257,32 +413,27 @@ function step(dt){
 
   // Proiettili
   for(const p of state.projectiles){
-    p.life -= dt;
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-
+    p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt;
     const enemyTeam = p.team==='P' ? 'E' : 'P';
-
-    // Se guaritore → cerca alleati; se danno → cerca nemici
     const unitsPool = state.units.filter(u=> (p.heal ? u.team===p.team : u.team===enemyTeam) );
 
     let hitTarget=null;
-    for(const u of unitsPool){
-      const d=Math.hypot(u.x-p.x,u.y-p.y);
-      if(d<14){ hitTarget=u; break; }
-    }
+    for(const u of unitsPool){ const d=Math.hypot(u.x-p.x,u.y-p.y); if(d<14){ hitTarget=u; break; } }
     if(!hitTarget){
-      // torri solo se danno oppure se heal verso le proprie torri
       const towers = p.heal ? (p.team==='P'?state.playerTowers:state.enemyTowers)
                             : (p.team==='P'?state.enemyTowers:state.playerTowers);
-      for(const t of towers){
-        const d=Math.hypot(t.x-p.x,t.y-p.y);
-        if(d<22){ hitTarget=t; break; }
-      }
+      for(const t of towers){ const d=Math.hypot(t.x-p.x,t.y-p.y); if(d<22){ hitTarget=t; break; } }
     }
     if(hitTarget){
-      if(p.heal) heal(hitTarget, p.dmg);
-      else damage(hitTarget, p.dmg);
+      if(p.aoe && !p.heal){
+        // danno ad area a tutte le unità nemiche vicine
+        for(const u of state.units.filter(u=>u.team===(p.team==='P'?'E':'P'))){
+          const d=Math.hypot(u.x-p.x,u.y-p.y); if(d<=p.aoeR) damage(u,p.dmg);
+        }
+        // piccola esplosione visiva
+        addHit(p.x,p.y,(p.team==='P')?'#7fb6ff':'#ff9b9b');
+      }
+      if(p.heal) heal(hitTarget, p.dmg); else damage(hitTarget, p.dmg);
       p.life=0;
     }
   }
@@ -297,30 +448,25 @@ function step(dt){
   const eAlive=state.enemyTowers.filter(t=>t.hp>0).length;
   state.crowns.you   = 2 - eAlive;
   state.crowns.enemy = 2 - pAlive;
-  if(state.playing && (pAlive===0 || eAlive===0)){ state.playing=false; sfx(eAlive===0?'win':'lose'); }
+  if(state.playing && (pAlive===0 || eAlive===0)) endMatch(eAlive===0);
 }
 
 /* ================== Rendering (real look) ================== */
 function bg(){
-  // Campo erba + vignetta
   ctx.fillStyle=tex.grass; ctx.fillRect(0,0,W,FIELD_H);
   const vg=ctx.createRadialGradient(W/2,FIELD_H/2,Math.min(W,FIELD_H)*0.2, W/2,FIELD_H/2, Math.max(W,FIELD_H)*0.7);
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.18)'); ctx.fillStyle=vg; ctx.fillRect(0,0,W,FIELD_H);
 
-  // Griglia sottile
   ctx.strokeStyle='#00000010'; ctx.lineWidth=1; ctx.beginPath();
   for(let y=0;y<=FIELD_H;y+=64){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
   for(let x=0;x<=W;x+=80){ ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H); }
   ctx.stroke();
 
-  // Corsie
   ctx.strokeStyle='#a99f72aa'; ctx.lineWidth=2;
   for(const x of COL_X){ ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,FIELD_H-20); ctx.stroke(); }
 
-  // Sponde
   ctx.fillStyle=tex.dirt; ctx.fillRect(0,RIVER_Y-28,W,12); ctx.fillRect(0,RIVER_Y+16,W,12);
 
-  // Acqua animata
   const t=state.time||0, h=26;
   const grad=ctx.createLinearGradient(0,RIVER_Y-h/2,0,RIVER_Y+h/2);
   grad.addColorStop(0,'#b4ecff'); grad.addColorStop(.5,'#79c6e2'); grad.addColorStop(1,'#5ab3d3');
@@ -333,7 +479,6 @@ function bg(){
   }
   ctx.restore();
 
-  // Ponti in rilievo
   const bridge=(cx)=>{
     softShadow(cx,RIVER_Y+14,70,12,0.28);
     ctx.save(); ctx.translate(cx,RIVER_Y);
@@ -348,7 +493,6 @@ function bg(){
   };
   bridge(W*0.3); bridge(W*0.7);
 
-  // Corsia selezionata
   ctx.fillStyle='#1a7fff18'; ctx.fillRect(COL_X[selectedCol]-W*0.16,0,W*0.32,FIELD_H);
 }
 
@@ -378,10 +522,8 @@ function tower(t,friendly){
 }
 
 function drawUnit(u){
-  // Scia
   ctx.save(); ctx.globalAlpha=0.18; ctx.fillStyle=(u.team==='P')?'#7fb6ff':'#ff9b9b';
   ctx.beginPath(); ctx.ellipse(u.x - u.dir*10, u.y+10, 18, 6, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
-
   softShadow(u.x,u.y+8,16,6,0.25);
 
   const edge=(u.team==='P')?'#0b4ea2':'#9b1c1c';
@@ -390,16 +532,18 @@ function drawUnit(u){
   rim.addColorStop(0,'#ffffff20'); rim.addColorStop(1,'#00000015');
   ctx.lineWidth=2; ctx.strokeStyle=edge;
 
-  if(u.type==='tank'){
+  if(['tank','guardian'].includes(u.type)){
     const grd=ctx.createLinearGradient(u.x,u.y-12,u.x,u.y+12);
     grd.addColorStop(0,'#b1b6bf'); grd.addColorStop(1,core);
-    ctx.fillStyle=grd; ctx.fillRect(u.x-18,u.y-13,36,26); ctx.strokeRect(u.x-18,u.y-13,36,26);
-    ctx.fillStyle=rim; ctx.fillRect(u.x-18,u.y-13,36,6);
-  }else if(u.type==='scout'){
+    ctx.fillStyle=grd; const w= (u.type==='guardian')?40:36, h=(u.type==='guardian')?30:26;
+    ctx.fillRect(u.x-w/2,u.y-h/2,w,h); ctx.strokeRect(u.x-w/2,u.y-h/2,w,h);
+    ctx.fillStyle=rim; ctx.fillRect(u.x-w/2,u.y-h/2,w,6);
+  }else if(['scout','rogue'].includes(u.type)){
     const g=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,14);
     g.addColorStop(0,'#ffffff'); g.addColorStop(1,core);
-    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke();
-  }else if(u.type==='spark'){
+    ctx.fillStyle=g; const r = (u.type==='rogue')?13:12;
+    ctx.beginPath(); ctx.arc(u.x,u.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  }else if(['spark','mage','bomber'].includes(u.type)){
     const g=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,18);
     g.addColorStop(0,'#fffacd'); g.addColorStop(1,(u.team==='P')?'#7fb6ff':'#ff9b9b');
     ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(u.x-14,u.y+12); ctx.lineTo(u.x+14,u.y+12); ctx.lineTo(u.x,u.y-14); ctx.closePath(); ctx.fill();
@@ -410,7 +554,6 @@ function drawUnit(u){
     ctx.fillStyle='#2d7a2d'; ctx.fillRect(u.x-2,u.y-8,4,16); ctx.fillRect(u.x-8,u.y-2,16,4);
   }
 
-  // Barra HP
   const ratio=clamp(u.hp/u.maxhp,0,1);
   ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(u.x-12,u.y-22,24,5);
   const g2=ctx.createLinearGradient(u.x-12,0,u.x+12,0); g2.addColorStop(0,'#7af07a'); g2.addColorStop(1,'#40c15b');
@@ -419,42 +562,43 @@ function drawUnit(u){
 
 function drawProjectiles(){
   for(const p of state.projectiles){
-    // scia
     ctx.save(); ctx.globalAlpha=0.3;
     const trail=ctx.createLinearGradient(p.x - p.vx*0.02, p.y - p.vy*0.02, p.x, p.y);
-    trail.addColorStop(0,'rgba(255,255,255,0)');
-    trail.addColorStop(1, p.colorB);
+    trail.addColorStop(0,'rgba(255,255,255,0)'); trail.addColorStop(1, p.colorB);
     ctx.strokeStyle=trail; ctx.lineWidth=3; ctx.beginPath();
     ctx.moveTo(p.x - p.vx*0.02, p.y - p.vy*0.02); ctx.lineTo(p.x, p.y); ctx.stroke();
     ctx.restore();
 
-    // corpo
     const glow=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,8);
     glow.addColorStop(0,p.colorA); glow.addColorStop(1,'rgba(255,255,255,0)');
     ctx.save(); ctx.globalAlpha=0.9; ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); ctx.restore();
 
-    // luce frontale
     ctx.fillStyle=p.colorB; ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI*2); ctx.fill();
   }
 }
 
 function drawCrowns(){
   ctx.fillStyle='#0f1115aa'; ctx.fillRect(0,0,W,22);
-  ctx.font='bold 14px system-ui'; ctx.textAlign='left'; ctx.fillStyle='#ffd966';
-  ctx.fillText('🔱 '+state.crowns.you, 10, 16);
+  ctx.font='bold 14px system-ui'; ctx.textAlign='left'; ctx.fillStyle='#ffd966'; ctx.fillText('🔱 '+state.crowns.you, 10, 16);
   ctx.textAlign='right'; ctx.fillText(state.crowns.enemy+' 🔱', W-10, 16);
 }
 
 /* ================== UI & Mana ================== */
-const cards=[
-  {label:'Scout (3)',type:'scout',cost:3},
-  {label:'Tank (4)', type:'tank', cost:4},
-  {label:'Spark (2)',type:'spark',cost:2},
-  {label:'Healer (3)',type:'healer',cost:3},
-  {label:'Riavvia',  type:'restart',cost:0},
-];
-const cardRects=[]; let helpBtn=null, helpClose=null;
-
+let cardRects=[]; let helpBtn=null, helpClose=null;
+function buildCardsFromDeck(){
+  state.cardsUI.length=0; cardRects.length=0;
+  // costruisci dalla PROG.deck (solo quelli presenti)
+  const chosen = PROG.deck.filter(Boolean);
+  if(chosen.length===0){ // fallback di sicurezza
+    chosen.push('scout','tank','spark','healer');
+  }
+  for(const key of chosen.slice(0,4)){
+    const c = CARDS_MASTER[key];
+    state.cardsUI.push({label:`${c.name} (${c.cost})`, type:c.type, cost:c.cost});
+  }
+  // aggiungo il tasto riavvio
+  state.cardsUI.push({label:'Riavvia', type:'restart', cost:0});
+}
 function drawManaBar(){
   const x=24,y=FIELD_H+16,w=W-48,h=14;
   const m=state.manaP,M=state.manaMax;
@@ -463,12 +607,9 @@ function drawManaBar(){
   ctx.fillStyle='rgba(32,42,58,0.95)'; ctx.fillRect(x,y,w,h);
   ctx.fillStyle=fill; ctx.fillRect(x,y,w*(m/M),h);
   ctx.globalAlpha=1;
-  ctx.strokeStyle='#ffffff66'; ctx.lineWidth=1;
-  for(let i=1;i<M;i++){ const tx=x+w*(i/M); ctx.beginPath(); ctx.moveTo(tx,y); ctx.lineTo(tx,y+h); ctx.stroke(); }
-  ctx.fillStyle='#cfe7ff'; ctx.font='bold 14px system-ui'; ctx.textAlign='right';
-  ctx.fillText(`${Math.floor(m)} / ${M} 💧`, x+w, y-2+h+14);
+  ctx.strokeStyle='#ffffff66'; ctx.lineWidth=1; for(let i=1;i<M;i++){ const tx=x+w*(i/M); ctx.beginPath(); ctx.moveTo(tx,y); ctx.lineTo(tx,y+h); ctx.stroke(); }
+  ctx.fillStyle='#cfe7ff'; ctx.font='bold 14px system-ui'; ctx.textAlign='right'; ctx.fillText(`${Math.floor(m)} / ${M} 💧`, x+w, y-2+h+14);
 }
-
 function roundRect(x,y,w,h,r,fill,stroke){
   ctx.beginPath();
   ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
@@ -477,24 +618,20 @@ function roundRect(x,y,w,h,r,fill,stroke){
   ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
   if(fill) ctx.fill(); if(stroke) ctx.stroke();
 }
-
 function drawUI(){
-  // pannello vetroso
   ctx.fillStyle='rgba(10,12,16,0.86)'; ctx.fillRect(0,FIELD_H,W,UI_H);
   ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect(0,FIELD_H, W, 1);
 
-  // help
   helpBtn={x:W-44,y:FIELD_H+12,w:32,h:32};
   ctx.fillStyle='#1b2330'; ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2; roundRect(helpBtn.x,helpBtn.y,helpBtn.w,helpBtn.h,8,true,true);
   ctx.fillStyle='#eef'; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('?',helpBtn.x+helpBtn.w/2,helpBtn.y+helpBtn.h/2+1);
 
   drawManaBar();
 
-  // carte
   cardRects.length=0; const gap=14, h=70, y=FIELD_H+44;
-  const w=(W-48-gap*(cards.length-1))/cards.length; let x=24;
+  const w=(W-48-gap*(state.cardsUI.length-1))/state.cardsUI.length; let x=24;
   ctx.font='600 16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  for(const c of cards){
+  for(const c of state.cardsUI){
     const ok = c.type==='restart' || (state.manaP>=c.cost && state.playing);
     const blink = (!ok && notEnoughManaBlink>0);
     ctx.fillStyle = ok ? '#1b2330' : (blink ? '#44222a' : '#121821');
@@ -503,36 +640,34 @@ function drawUI(){
     cardRects.push({x,y,w,h,...c}); x+=w+gap;
   }
 
-  // overlay fine partita
   if(!state.playing){
     ctx.fillStyle='#00000080'; ctx.fillRect(0,0,W,FIELD_H);
-    ctx.fillStyle='#fff'; ctx.font='bold 38px system-ui'; ctx.textAlign='center';
+    ctx.fillStyle='#fff'; ctx.font='bold 36px system-ui'; ctx.textAlign='center';
     const win = state.crowns.you>state.crowns.enemy || state.enemyTowers.every(t=>t.hp<=0);
-    ctx.fillText(win?'🏆 Vittoria!':'💀 Sconfitta', W/2, FIELD_H/2);
-    ctx.font='18px system-ui'; ctx.fillText('Tocca "Riavvia" per giocare ancora', W/2, FIELD_H/2+40);
+    ctx.fillText(win?'🏆 Vittoria!':'💀 Sconfitta', W/2, FIELD_H/2-20);
+    const trophyGain = state.crowns.you; // 0..2
+    ctx.font='18px system-ui'; ctx.fillText(`Ricompensa: +${trophyGain} trofei`, W/2, FIELD_H/2+16);
+    ctx.fillText('Tocca "Riavvia" o apri il mazzo (☰) per modifiche', W/2, FIELD_H/2+44);
   }
 
-  // help overlay
   if(showHelp){
     ctx.fillStyle='#000000cc'; ctx.fillRect(0,0,W,H);
     ctx.fillStyle='#fff'; ctx.font='bold 26px system-ui'; ctx.textAlign='center'; ctx.fillText('Guida rapida', W/2, 120);
     ctx.font='18px system-ui'; ctx.textAlign='left';
     const lines=[
       '• Tocca il CAMPO per scegliere la corsia (A/B/C).',
-      '• Gioca una carta: il numero è il COSTO in mana.',
-      '• La barra in basso mostra QUANTO mana hai (con tacche).',
-      '• L’IA usa mana separato: il tuo non scende da solo.',
-      '• Spark spara proiettili, Healer lancia orbi di cura.',
-      '• 🔔 Le TORRI sparano automaticamente a corto raggio.',
-      '• Vince chi fa più corone o abbatte entrambe le torri.',
+      '• Le carte in basso sono il tuo MAZZO scelto prima del match.',
+      '• Il numero tra parentesi è il COSTO in mana.',
+      '• Spark/Mage/Bomber sparano; Healer cura; Rogue/Scout picchiano rapidi; Tank/Guardian assorbono colpi.',
+      '• Le TORRI sparano automaticamente a corto raggio.',
+      '• A fine partita ottieni trofei: sblocca nuove carte al raggiungimento dei traguardi.',
       '• “Riavvia” ricomincia la partita.'
     ];
     let y0=160, lh=26, x0=60; for(const s of lines){ ctx.fillText(s,x0,y0); y0+=lh; }
     const bx=W/2-80, by=y0+20, bw=160, bh=48;
     ctx.fillStyle='#1b2330'; roundRect(bx,by,bw,bh,12,true,false);
     ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2; roundRect(bx,by,bw,bh,12,false,true);
-    ctx.fillStyle='#eef'; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText('Chiudi', bx+bw/2, by+bh/2);
+    ctx.fillStyle='#eef'; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('Chiudi', bx+bw/2, by+bh/2);
     helpClose={x:bx,y:by,w:bw,h:bh};
   } else helpClose=null;
 }
@@ -541,7 +676,6 @@ function drawUI(){
 function draw(){
   ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0f1115'; ctx.fillRect(0,0,canvas.width,canvas.height);
   ctx.setTransform(scale,0,0,scale,offX,offY);
-
   bg(); drawCrowns();
   state.playerTowers.forEach(t=>tower(t,true));
   state.enemyTowers.forEach(t=>tower(t,false));
@@ -549,7 +683,6 @@ function draw(){
   drawProjectiles();
   for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.c; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
   for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.c; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
-
   drawUI();
 }
 function loop(ts){
@@ -563,26 +696,13 @@ requestAnimationFrame(loop);
 canvas.addEventListener('pointerdown',(e)=>{
   e.preventDefault();
   const {x,y}=toLogical(e);
-  // Selezione corsia
-  if(y<FIELD_H && !showHelp){
-    let k=0,b=1e9; for(let i=0;i<COL_X.length;i++){ const d=Math.abs(x-COL_X[i]); if(d<b){b=d;k=i;} }
-    selectedCol=k; return;
-  }
-  // Help
+  if(y<FIELD_H && !showHelp){ let k=0,b=1e9; for(let i=0;i<COL_X.length;i++){ const d=Math.abs(x-COL_X[i]); if(d<b){b=d;k=i;} } selectedCol=k; return; }
   if(helpBtn && x>=helpBtn.x && x<=helpBtn.x+helpBtn.w && y>=helpBtn.y && y<=helpBtn.y+helpBtn.h){ showHelp=!showHelp; return; }
   if(showHelp && helpClose && x>=helpClose.x && x<=helpClose.x+helpClose.w && y>=helpClose.y && y<=helpClose.y+helpClose.h){ showHelp=false; return; }
-
-  // Carte
   for(const r of cardRects){
     if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
       if(r.type==='restart'){
-        Object.assign(state,{playing:true,time:0});
-        state.match.t=0; state.crowns.you=state.crowns.enemy=0;
-        state.manaP=5; state.manaE=5; state.units.length=0; state.projectiles.length=0;
-        // reset torri
-        for(const t of state.playerTowers){ t.hp=t.max; t.cd=0; }
-        for(const t of state.enemyTowers){ t.hp=t.max; t.cd=0; }
-        return;
+        startMatchWithDeck(); return;
       }
       if(state.playing && state.manaP>=r.cost){
         addUnit('P', selectedCol??1, r.type);
@@ -592,6 +712,61 @@ canvas.addEventListener('pointerdown',(e)=>{
     }
   }
 },{passive:false});
+
+/* ================== Match control & Rewards ================== */
+function startMatchWithDeck(){
+  // reset
+  Object.assign(state,{playing:true,time:0});
+  state.match.t=0; state.crowns.you=state.crowns.enemy=0;
+  state.manaP=5; state.manaE=5; state.units.length=0; state.projectiles.length=0; state.floats.length=0; state.particles.length=0;
+  for(const t of state.playerTowers){ t.hp=t.max; t.cd=0; }
+  for(const t of state.enemyTowers){ t.hp=t.max; t.cd=0; }
+  buildCardsFromDeck();
+}
+
+function endMatch(win){
+  state.playing=false; sfx(win?'win':'lose');
+  const gain = state.crowns.you; // 0..2
+  if(gain>0){
+    const before=PROG.trophies;
+    PROG.trophies += gain;
+    saveProgress(PROG);
+    // controlla sblocchi
+    let unlockedNow=[];
+    for(const m of MILESTONES){
+      if(before < m.need && PROG.trophies >= m.need){
+        if(!PROG.unlocked.includes(m.card)){
+          PROG.unlocked.push(m.card);
+          unlockedNow.push(m.card);
+        }
+      }
+    }
+    if(unlockedNow.length){
+      saveProgress(PROG);
+      setTimeout(()=>{ showUnlockBanner(unlockedNow); }, 400);
+    }
+  }
+  // riapri sinteticamente la home in overlay: lascia al giocatore la scelta
+  setTimeout(()=>{ openHome(); }, 600);
+}
+
+function showUnlockBanner(cards){
+  const names = cards.map(k=>CARDS_MASTER[k].name).join(', ');
+  const div=document.createElement('div');
+  div.className='overlay';
+  div.innerHTML=`<div class="panel"><div style="font-weight:700; font-size:20px; margin-bottom:8px">🎉 Nuove carte sbloccate!</div><div class="small" style="margin-bottom:10px">${names}</div><button class="btn primary" id="okUnlock">OK</button></div>`;
+  document.body.appendChild(div);
+  sfx('unlock');
+  div.querySelector('#okUnlock').onclick=()=>{ div.remove(); openHome(); };
+}
+
+/* ================== Home open ================== */
+function openHome(){
+  refreshHome();
+  homeUI.style.display='flex';
+}
+// Apri home all'avvio (prima di giocare)
+openHome();
 </script>
 </body>
 </html>
