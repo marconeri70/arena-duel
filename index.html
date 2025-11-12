@@ -3,231 +3,259 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Arena Duel – v3 (Xiaomi/Chrome fix)</title>
+<title>Arena Vertical – MVP</title>
 <style>
-  html,body{margin:0;height:100%;background:#0e1013;}
+  html,body{margin:0;height:100%;background:#0f1115;}
   canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none; -webkit-tap-highlight-color:transparent;}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <script>
-/* ====== Canvas fullscreen con trasformazione controllata ====== */
+/* ====== Canvas fullscreen + mapping logico PORTRAIT ====== */
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d', {alpha:false});
+const ctx = canvas.getContext('2d',{alpha:false});
 
-let cssW=0, cssH=0, pxW=0, pxH=0;  // dimensioni canvas
-const W=720, H=1280;               // spazio logico in verticale
-const PLAY_H=1080, UI_H=H-PLAY_H;
+const W=720, H=1280;           // spazio logico in VERTICALE
+const UI_H=180;                // barra comandi grande
+const FIELD_H=H-UI_H;
 
-let scale=1, offX=0, offY=0;       // trasformazione attuale (in pixel canvas)
-
-/* aggiorna dimensioni e trasformazione */
+let scale=1, offX=0, offY=0;
 function resize(){
-  const r = canvas.getBoundingClientRect();
-  cssW = r.width; cssH = r.height;
-  const dpr = window.devicePixelRatio || 1;
-  pxW = Math.max(1, Math.round(cssW*dpr));
-  pxH = Math.max(1, Math.round(cssH*dpr));
-  if(canvas.width!==pxW || canvas.height!==pxH){ canvas.width=pxW; canvas.height=pxH; }
-  // mappa W×H dentro pxW×pxH (letterboxing)
-  scale = Math.min(pxW / W, pxH / H);
-  offX  = Math.floor((pxW - W*scale)/2);
-  offY  = Math.floor((pxH - H*scale)/2);
+  const r=canvas.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  canvas.width=Math.max(1,Math.round(r.width*dpr));
+  canvas.height=Math.max(1,Math.round(r.height*dpr));
+  scale=Math.min(canvas.width/W, canvas.height/H);
+  offX=Math.floor((canvas.width-W*scale)/2);
+  offY=Math.floor((canvas.height-H*scale)/2);
 }
-addEventListener('resize', resize);
-addEventListener('orientationchange', resize);
-resize();
+addEventListener('resize',resize); addEventListener('orientationchange',resize); resize();
 
-/* funzione INVERTI trasformazione: da evento → coordinate logiche */
-function toLogical(ev){
-  // coord in CSS pixel dentro il canvas
-  const rect = canvas.getBoundingClientRect();
-  const cssX = ev.clientX - rect.left;
-  const cssY = ev.clientY - rect.top;
-  // CSS → pixel canvas
-  const Xd = cssX * (canvas.width / rect.width);
-  const Yd = cssY * (canvas.height / rect.height);
-  // pixel canvas → coordinate logiche (invertiamo Xd = offX + scale*Xl)
-  const Xl = (Xd - offX) / scale;
-  const Yl = (Yd - offY) / scale;
-  return {x:Xl, y:Yl};
+function toLogical(e){
+  const r=canvas.getBoundingClientRect();
+  const xDev=(e.clientX-r.left)*(canvas.width/r.width);
+  const yDev=(e.clientY-r.top)*(canvas.height/r.height);
+  return {x:(xDev-offX)/scale, y:(yDev-offY)/scale};
 }
 
-/* ====== Gioco (uguale a prima) ====== */
+/* ====== Gioco verticale ====== */
 const rand=(a,b)=>a+Math.random()*(b-a);
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
-let tprev=performance.now(), playing=true;
-const LANE_Y=[PLAY_H*0.58, PLAY_H*0.70, PLAY_H*0.82];
-const RIVER_Y=PLAY_H*0.56;
+
+const COL_X=[W*0.18, W*0.5, W*0.82];  // 3 colonne
+const RIVER_Y=FIELD_H*0.5;
 
 const state={
-  mana:5, manaMax:10, manaRegen:0.015, t:0, time:0,
-  playerTowers:[{x:W*0.12,y:PLAY_H*0.60,hp:100,max:100},{x:W*0.12,y:PLAY_H*0.80,hp:100,max:100}],
-  enemyTowers:[{x:W*0.88,y:PLAY_H*0.60,hp:100,max:100},{x:W*0.88,y:PLAY_H*0.80,hp:100,max:100}],
-  units:[], floats:[], particles:[]
+  mana:5, manaMax:10, manaRegen:0.016, t:0, playing:true, time:0,
+  playerTowers:[{x:W*0.25, y:FIELD_H-90, hp:100, max:100},{x:W*0.75, y:FIELD_H-90, hp:100, max:100}],
+  enemyTowers: [{x:W*0.25, y:90, hp:100, max:100},{x:W*0.75, y:90, hp:100, max:100}],
+  units:[/* {team:'P'|'E', x, y, dir:-1/1, col, spd,hp,atk,range,rate,cd,type} */],
+  floats:[], particles:[],
 };
-
-function addUnit(team,lane,type){
-  const y=LANE_Y[lane], dir=(team==='P')?1:-1, x=(team==='P')?W*0.20:W*0.80;
-  const u={team,x,y,dir,type,cd:0};
-  if(type==='scout') Object.assign(u,{spd:.8,hp:18,atk:3,range:14,rate:.7});
-  else if(type==='tank') Object.assign(u,{spd:.45,hp:60,atk:6,range:18,rate:1.2});
-  else Object.assign(u,{spd:.7,hp:12,atk:8,range:70,rate:1.6}); // spark
+function addUnit(team,col,type){
+  const x=COL_X[col], dir=(team==='P')?-1:1;
+  const y=(team==='P')? (FIELD_H-130) : 130;
+  let u={team, x, y, dir, col, type, cd:0};
+  if(type==='scout') Object.assign(u,{spd:1.2, hp:16, atk:3, range:20, rate:.5});
+  else if(type==='tank') Object.assign(u,{spd:.7, hp:60, atk:6, range:26, rate:1.0});
+  else Object.assign(u,{spd:.9, hp:12, atk:8, range:90, rate:1.4}); // spark
   state.units.push(u);
 }
 
-let aiTimer=2.5;
+let aiT=2.2;
 function ai(dt){
-  aiTimer-=dt;
-  if(aiTimer<=0 && playing){
-    aiTimer = rand(1.8,3.2);
-    const m=Math.floor(state.mana), opt=[];
-    if(m>=2) opt.push('spark'); if(m>=3) opt.push('scout'); if(m>=4) opt.push('tank');
-    if(opt.length){ const t=opt[(Math.random()*opt.length)|0], c=(t==='tank'?4:(t==='scout'?3:2));
-      state.mana=Math.max(0,state.mana-c); addUnit('E',(Math.random()*3)|0,t); }
+  aiT-=dt;
+  if(aiT<=0 && state.playing){
+    aiT=rand(1.4,2.6);
+    const m=Math.floor(state.mana), pool=[];
+    if(m>=2) pool.push('spark'); if(m>=3) pool.push('scout'); if(m>=4) pool.push('tank');
+    if(pool.length){
+      const t=pool[(Math.random()*pool.length)|0];
+      const cost=t==='tank'?4:t==='scout'?3:2;
+      state.mana=Math.max(0,state.mana-cost);
+      addUnit('E', (Math.random()*3)|0, t);
+    }
   }
 }
 
-function addFloat(x,y,v,col){ state.floats.push({x,y,v,col,t:0}); }
-function addHitSparks(x,y,col){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.5,-0.4),life:rand(.3,.6),t:0,col}); }
-function applyDamage(t,d){ if(!('hp' in t))return; t.hp-=d; const c=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-26,(d>=0?'-':'+')+Math.abs(d),c); addHitSparks(t.x,t.y-10,c); }
+/* ====== Utility effetti ====== */
+function addFloat(x,y,v,c){ state.floats.push({x,y,v,c,t:0}); }
+function addHit(x,y,c){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.2,-.2),life:rand(.25,.5),t:0,c}); }
+function hit(t,d){ if(!('hp' in t))return; t.hp-=d; const c=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-24,(d>=0?'-':'+')+Math.abs(d),c); addHit(t.x,t.y-6,c); }
+
 function nearest(u,towers,foes){
-  let best=null,bd=1e9;
-  for(const f of foes){ const d=Math.hypot(f.x*u.dir-u.x*u.dir,f.y-u.y); if(d<bd){bd=d; best=f;} }
-  if(!best){ let tgt=null,dm=1e9; for(const t of towers){ const d=Math.abs(t.y-u.y)+Math.abs(t.x-u.x); if(t.hp>0&&d<dm){dm=d; tgt=t;} } best=tgt; }
-  return {t:best,d:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
+  let best=null,b=1e9;
+  for(const f of foes){ const d=Math.abs(f.y*u.dir-u.y*u.dir)+Math.abs(f.x-u.x)*.3; if(d<b){b=d;best=f;} }
+  if(!best){ let tg=null,dm=1e9; for(const t of towers){ const d=Math.abs(t.y-u.y)+Math.abs(t.x-u.x)*.4; if(t.hp>0 && d<dm){dm=d; tg=t;} } best=tg; }
+  return {t:best, dist:best?Math.hypot(best.x-u.x, best.y-u.y):1e9};
 }
 
+/* ====== Update ====== */
+let last=performance.now();
 function step(dt){
-  if(!playing) return;
-  state.t+=dt; state.time+=dt;
-  state.mana = clamp(state.mana + (state.manaRegen+0.003*Math.sin(state.t*2.2))*60*dt, 0, state.manaMax);
+  if(!state.playing) return;
+  state.time+=dt; state.t+=dt;
+  state.mana=clamp(state.mana + state.manaRegen*60*dt, 0, state.manaMax);
   ai(dt);
 
   for(const u of state.units){
-    const enemy=u.team==='P'?'E':'P';
-    const foes=state.units.filter(x=>x.team===enemy);
-    const towers=(enemy==='E'?state.enemyTowers:state.playerTowers);
-    const {t,d}=nearest(u,towers,foes);
+    const enemy = u.team==='P' ? 'E' : 'P';
+    const foes = state.units.filter(x=>x.team===enemy && x.col===u.col);
+    const towers = (enemy==='E'? state.enemyTowers : state.playerTowers).filter(t=>Math.abs(t.x-u.x)<W*0.3);
+    const {t, dist} = nearest(u, towers, foes);
     u.cd-=dt;
-    if(t && d<=u.range){ if(u.cd<=0){ u.cd=u.rate; applyDamage(t,u.atk); } }
-    else u.x += u.spd*u.dir*60*dt;
+    if(t && dist<=u.range){ if(u.cd<=0){u.cd=u.rate; hit(t,u.atk);} }
+    else u.y += u.spd * u.dir * 60 * dt;
   }
+  state.units = state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
 
-  for(const f of state.floats){ f.t+=dt; f.y-=20*dt; f.x+=Math.sin(f.t*6)*6*dt; }
-  state.floats=state.floats.filter(f=>f.t<.9);
-  for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.03; }
-  state.particles=state.particles.filter(p=>p.t<p.life);
-  state.units=state.units.filter(u=>u.hp>0 && u.x>0 && u.x<W);
+  for(const f of state.floats){ f.t+=dt; f.y-=24*dt; }
+  state.floats = state.floats.filter(f=>f.t<.9);
+  for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.04; }
+  state.particles = state.particles.filter(p=>p.t<p.life);
 
   const pAlive=state.playerTowers.some(t=>t.hp>0), eAlive=state.enemyTowers.some(t=>t.hp>0);
-  if(!pAlive || !eAlive) playing=false;
+  if(!pAlive || !eAlive) state.playing=false;
 }
 
-/* ====== Disegno ====== */
+/* ====== Disegno (pulito) ====== */
 const CARDS=[
   {label:'Scout (3)', type:'scout', cost:3},
   {label:'Tank (4)',  type:'tank',  cost:4},
   {label:'Spark (2)', type:'spark', cost:2},
-  {label:'Riavvia',   type:'restart', cost:0}
+  {label:'Riavvia',   type:'restart', cost:0},
 ];
-const cardRects=[]; // hitbox dei pulsanti
+const cardRects=[];
 
-function drawBG(){
-  const g=ctx.createLinearGradient(0,0,0,PLAY_H); g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#dbcf9a');
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,PLAY_H);
+function bg(){
+  // prato sfumato
+  const g=ctx.createLinearGradient(0,0,0,FIELD_H);
+  g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#d9cf98');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,FIELD_H);
 
-  ctx.strokeStyle='#b9b083'; ctx.lineWidth=2;
-  [PLAY_H*0.58,PLAY_H*0.70,PLAY_H*0.82].forEach(y=>{ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); });
+  // griglia leggera
+  ctx.strokeStyle='#00000010'; ctx.lineWidth=1; ctx.beginPath();
+  for(let y=0;y<=FIELD_H;y+=70){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
+  for(let x=0;x<=W;x+=90){ ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H); }
+  ctx.stroke();
 
-  ctx.fillStyle='#7ccbe1'; ctx.fillRect(0,PLAY_H*0.52,W,12);
-
-  const bridge=cx=>{ ctx.save(); ctx.translate(cx,PLAY_H*0.52+6);
+  // fiume
+  ctx.fillStyle='#7bc6de'; ctx.fillRect(0,RIVER_Y-12,W,24);
+  // ponti
+  const bridge = cx => {
+    ctx.save(); ctx.translate(cx,RIVER_Y);
     ctx.fillStyle='#8c5a2c'; ctx.strokeStyle='#5e3c1c'; ctx.lineWidth=3;
-    ctx.fillRect(-40,-12,80,24); ctx.strokeRect(-40,-12,80,24);
-    ctx.strokeStyle='#75471f'; for(let i=-36;i<=36;i+=12){ ctx.beginPath(); ctx.moveTo(i,-12); ctx.lineTo(i,12); ctx.stroke(); } ctx.restore(); };
-  bridge(W*.3); bridge(W*.7);
-}
-function drawTower(t,friend){
-  ctx.fillStyle='#00000020'; ctx.beginPath(); ctx.ellipse(t.x,t.y+10,26,10,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle=friend?'#4b6cb7':'#c24b4b'; ctx.strokeStyle=friend?'#0e3f8f':'#8a1f1f'; ctx.lineWidth=3;
-  ctx.beginPath(); ctx.arc(t.x,t.y,24,0,Math.PI*2); ctx.fill(); ctx.stroke();
-  ctx.fillStyle='#f2d16b'; ctx.strokeStyle='#a8841e';
-  ctx.beginPath(); ctx.moveTo(t.x-14,t.y-20); ctx.lineTo(t.x-7,t.y-10); ctx.lineTo(t.x,t.y-20); ctx.lineTo(t.x+7,t.y-10); ctx.lineTo(t.x+14,t.y-20); ctx.lineTo(t.x+14,t.y-8); ctx.lineTo(t.x-14,t.y-8); ctx.closePath(); ctx.fill(); ctx.stroke();
-  const w=70,h=8; ctx.fillStyle='#00000055'; ctx.fillRect(t.x-w/2,t.y-34,w,h);
-  ctx.fillStyle='#4ee46a'; ctx.fillRect(t.x-w/2,t.y-34,w*clamp(t.hp/t.max,0,1),h);
-}
-function drawUnits(){
-  for(const u of state.units){
-    ctx.fillStyle='#00000020'; ctx.beginPath(); ctx.ellipse(u.x,u.y+8,16,7,0,0,Math.PI*2); ctx.fill();
-    if(u.team==='P'){ ctx.fillStyle='#2f80ed'; ctx.strokeStyle='#0b4ea2'; } else { ctx.fillStyle='#eb5757'; ctx.strokeStyle='#9b1c1c'; }
-    ctx.lineWidth=2;
-    if(u.type==='tank'){ ctx.fillRect(u.x-16,u.y-12,32,24); ctx.strokeRect(u.x-16,u.y-12,32,24); }
-    else if(u.type==='scout'){ ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke(); }
-    else { ctx.beginPath(); ctx.moveTo(u.x-14,u.y+10); ctx.lineTo(u.x+14,u.y+10); ctx.lineTo(u.x,u.y-12); ctx.closePath(); ctx.fill(); ctx.stroke(); }
-    ctx.fillStyle='#00000055'; ctx.fillRect(u.x-12,u.y-20,24,4);
-    const maxhp=u.type==='tank'?60:u.type==='scout'?18:12; ctx.fillStyle='#4ee46a'; ctx.fillRect(u.x-12,u.y-20,24*clamp(u.hp/maxhp,0,1),4);
-  }
-}
-function drawUI(){
-  // fascia scura
-  ctx.fillStyle='#0e1013'; ctx.fillRect(0,PLAY_H,W,UI_H);
+    ctx.fillRect(-60,-16,120,32); ctx.strokeRect(-60,-16,120,32);
+    ctx.strokeStyle='#6d461f';
+    for(let i=-54;i<=54;i+=14){ ctx.beginPath(); ctx.moveTo(i,-16); ctx.lineTo(i,16); ctx.stroke(); }
+    ctx.restore();
+  };
+  bridge(W*0.3); bridge(W*0.7);
 
-  // mana bar
-  ctx.fillStyle='#22324a'; ctx.fillRect(16, PLAY_H+8, W-32, 12);
-  ctx.fillStyle='#61dafb'; ctx.fillRect(16, PLAY_H+8, (W-32)*(state.mana/state.manaMax), 12);
+  // colonne corsie
+  ctx.strokeStyle='#b6aa7c'; ctx.lineWidth=2;
+  for(const x of COL_X){ ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,FIELD_H-20); ctx.stroke(); }
+}
+function tower(t, friendly){
+  // ombra
+  ctx.fillStyle='#00000022'; ctx.beginPath(); ctx.ellipse(t.x, t.y+10, 26, 8, 0, 0, Math.PI*2); ctx.fill();
+  // base
+  ctx.fillStyle=friendly?'#3b7ae0':'#d14f4f'; ctx.strokeStyle=friendly?'#17409e':'#8b2222'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(t.x,t.y,24,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  // corona
+  ctx.fillStyle='#f4cd63'; ctx.strokeStyle='#9a7b1a';
+  ctx.beginPath(); ctx.moveTo(t.x-16,t.y-22); ctx.lineTo(t.x-6,t.y-8); ctx.lineTo(t.x+6,t.y-22); ctx.lineTo(t.x+16,t.y-8); ctx.lineTo(t.x+16,t.y-2); ctx.lineTo(t.x-16,t.y-2); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // hp
+  const w=70,h=8; ctx.fillStyle='#00000055'; ctx.fillRect(t.x-w/2,t.y-34,w,h);
+  ctx.fillStyle='#4ee46a'; ctx.fillRect(t.x-w/2,t.y-34, w*clamp(t.hp/t.max,0,1), h);
+}
+function unit(u){
+  ctx.fillStyle='#00000025'; ctx.beginPath(); ctx.ellipse(u.x, u.y+8, 16, 6, 0, 0, Math.PI*2); ctx.fill();
+  if(u.team==='P'){ ctx.fillStyle='#2f80ed'; ctx.strokeStyle='#0b4ea2'; }
+  else { ctx.fillStyle='#eb5757'; ctx.strokeStyle='#9b1c1c'; }
+  ctx.lineWidth=2;
+  if(u.type==='tank'){ ctx.fillRect(u.x-16,u.y-12,32,24); ctx.strokeRect(u.x-16,u.y-12,32,24); }
+  else if(u.type==='scout'){ ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.moveTo(u.x-14,u.y+10); ctx.lineTo(u.x+14,u.y+10); ctx.lineTo(u.x,u.y-12); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+  // barra hp
+  const maxhp=u.type==='tank'?60:u.type==='scout'?16:12;
+  ctx.fillStyle='#00000055'; ctx.fillRect(u.x-12,u.y-20,24,4);
+  ctx.fillStyle='#4ee46a'; ctx.fillRect(u.x-12,u.y-20,24*clamp(u.hp/maxhp,0,1),4);
+}
+function ui(){
+  // pannello
+  ctx.fillStyle='#0f1115'; ctx.fillRect(0,FIELD_H, W, UI_H);
+  // mana
+  ctx.fillStyle='#202a3a'; ctx.fillRect(24, FIELD_H+16, W-48, 14);
+  ctx.fillStyle='#61dafb'; ctx.fillRect(24, FIELD_H+16, (W-48)*(state.mana/state.manaMax), 14);
 
   // pulsanti
   cardRects.length=0;
-  const gap=12, w=(W-32-gap*(CARDS.length-1))/CARDS.length, h=52, y=PLAY_H+24; let x=16;
-  ctx.font='16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  const gap=18, w=(W-48-gap*(CARDS.length-1))/CARDS.length, h=66, y=FIELD_H+42; let x=24;
+  ctx.font='600 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
   for(const c of CARDS){
-    ctx.fillStyle='#1b2330'; ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2; ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
-    ctx.fillStyle='#eef'; ctx.fillText(c.label, x+w/2, y+h/2);
-    cardRects.push({x:x-6, y:y-6, w:w+12, h:h+12, ...c}); // hitbox più ampia
-    x+=w+gap;
+    const enabled = (c.type==='restart') || (state.mana>=c.cost && state.playing);
+    ctx.fillStyle = enabled ? '#1b2330' : '#121821';
+    ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2;
+    // pulsante con angoli morbidi
+    const r=14; ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+    ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+    ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+    ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // label
+    ctx.fillStyle = enabled ? '#eef' : '#8893a8';
+    ctx.fillText(c.label, x+w/2, y+h/2);
+    cardRects.push({x, y, w, h, ...c});
+    x += w + gap;
   }
 }
-function draw(){
-  // letterbox
-  ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0e1013'; ctx.fillRect(0,0,canvas.width,canvas.height);
-  // area logica
-  ctx.setTransform(scale,0,0,scale,offX,offY);
-  drawBG();
-  state.playerTowers.forEach(t=>drawTower(t,true));
-  state.enemyTowers.forEach(t=>drawTower(t,false));
-  drawUnits();
-  // (danni/cure/particelle omessi per semplicità)
-  drawUI();
-}
 
-function loop(now){
-  const dt=Math.min(0.033,(now-tprev)/1000);
-  tprev=now; step(dt); draw(); requestAnimationFrame(loop);
+/* ====== Loop ====== */
+function draw(){
+  // letterbox esterno
+  ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0f1115'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  // mapping logico
+  ctx.setTransform(scale,0,0,scale,offX,offY);
+
+  bg();
+  state.playerTowers.forEach(t=>tower(t,true));
+  state.enemyTowers.forEach(t=>tower(t,false));
+  for(const u of state.units) unit(u);
+
+  for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.c; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
+  for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.c; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
+
+  ui();
+}
+function loop(ts){
+  const dt=Math.min(0.033,(ts-last)/1000); last=ts;
+  step(dt); draw(); requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
-/* ====== Pointer Events: un solo handler per tap/click ====== */
+/* ====== Input robusto (pointerdown) ====== */
 canvas.addEventListener('pointerdown', (e)=>{
   e.preventDefault();
-  // coord logiche
-  const {x,y} = toLogical(e);
-  // test sui bottoni
+  const {x,y}=toLogical(e);
+  // click pulsanti
   for(const r of cardRects){
     if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
       if(r.type==='restart'){
-        state.units.length=0; state.mana=5; state.t=0; state.time=0; playing=true;
-        state.playerTowers.forEach(t=>t.hp=t.max); state.enemyTowers.forEach(t=>t.hp=t.max);
-      }else if(playing && state.mana>=r.cost){
-        const lane = Math.floor(state.time*2) % 3;
-        addUnit('P', lane, r.type);
-        state.mana -= r.cost;
+        state.playing=true; state.mana=5; state.units.length=0;
+        state.playerTowers.forEach(t=>t.hp=t.max);
+        state.enemyTowers.forEach(t=>t.hp=t.max);
+        return;
+      }else if(state.playing && state.mana>=r.cost){
+        addUnit('P', Math.floor(state.time*2)%3, r.type);
+        state.mana = Math.max(0, state.mana-r.cost);
+        return;
       }
-      return;
     }
   }
-}, {passive:false});
+},{passive:false});
 </script>
 </body>
 </html>
