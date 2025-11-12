@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Arena Vertical – v3 (real look + proiettili)</title>
+<title>Arena Vertical – v3 (real look + proiettili + torri che sparano)</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1115;}
   canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none; -webkit-tap-highlight-color:transparent;}
@@ -79,8 +79,15 @@ const state={
   time:0, playing:true,
   match:{t:0,len:120},
   crowns:{you:0, enemy:0},
-  playerTowers:[{x:W*0.25,y:FIELD_H-95,hp:100,max:100},{x:W*0.75,y:FIELD_H-95,hp:100,max:100}],
-  enemyTowers: [{x:W*0.25,y:95,hp:100,max:100},{x:W*0.75,y:95,hp:100,max:100}],
+  // Torri: aggiungo raggio/rate/cd (e un piccolo offset di bocca da fuoco)
+  playerTowers:[
+    {x:W*0.25,y:FIELD_H-95,hp:100,max:100, range:150, rate:1.0, cd:0, muzzle:{x:10,y:-18}},
+    {x:W*0.75,y:FIELD_H-95,hp:100,max:100, range:150, rate:1.0, cd:0, muzzle:{x:10,y:-18}}
+  ],
+  enemyTowers: [
+    {x:W*0.25,y:95,hp:100,max:100, range:150, rate:1.0, cd:0, muzzle:{x:10,y:-18}},
+    {x:W*0.75,y:95,hp:100,max:100, range:150, rate:1.0, cd:0, muzzle:{x:10,y:-18}}
+  ],
   units:[], floats:[], particles:[], projectiles:[]
 };
 
@@ -89,7 +96,7 @@ let ac;
 function sfx(kind){ try{
   ac=ac||new (window.AudioContext||window.webkitAudioContext)();
   const o=ac.createOscillator(), g=ac.createGain();
-  const map={hit:[220,.05,'square'], place:[660,.06,'square'], win:[880,.35,'triangle'], lose:[160,.35,'triangle'], heal:[520,.07,'sine'], shoot:[780,.05,'triangle']};
+  const map={hit:[220,.05,'square'], place:[660,.06,'square'], win:[880,.35,'triangle'], lose:[160,.35,'triangle'], heal:[520,.07,'sine'], shoot:[780,.05,'triangle'], t_shoot:[520,.06,'square']};
   const [f,t,w]=(map[kind]||[440,.08,'square']); o.type=w; o.frequency.value=f; g.gain.value=.06;
   o.connect(g); g.connect(ac.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime+t); o.stop(ac.currentTime+t);
 }catch{} }
@@ -112,15 +119,15 @@ function addUnit(team,col,type){
 }
 
 function fireProjectile({x,y}, target, opts){
-  // opts: {team, heal:false, dmg:8, speed:420, colorA, colorB}
+  // opts: {team, heal:false, dmg:8, speed:420, colorA, colorB, kind:'unit'|'tower'}
   const dx=target.x - x, dy=target.y - y, L=Math.hypot(dx,dy)||1;
   const vx = (dx/L) * (opts.speed||420);
   const vy = (dy/L) * (opts.speed||420);
   state.projectiles.push({
     x, y, vx, vy, team:opts.team, heal:opts.heal||false, dmg:opts.dmg||8, life:1.5,
-    colorA:opts.colorA||'#fffacd', colorB:opts.colorB||'#7fb6ff', targetRef:target
+    colorA:opts.colorA||'#fffacd', colorB:opts.colorB||'#7fb6ff', from:opts.kind||'unit'
   });
-  sfx('shoot');
+  sfx(opts.kind==='tower' ? 't_shoot' : 'shoot');
 }
 
 /* ================== IA ================== */
@@ -148,6 +155,52 @@ function nearest(u,towers,foes){
   return {t:best, dist:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
 }
 
+function towerAI(dt){
+  // Torri giocatore → sparano a unità nemiche nel raggio sopra di loro
+  for(const tw of state.playerTowers){
+    tw.cd -= dt;
+    if(tw.hp<=0) continue;
+    // unità nemiche sopra la torre (y < torre.y), nel raggio
+    let target=null, best=1e9;
+    for(const u of state.units.filter(u=>u.team==='E')){
+      if(u.y >= tw.y) continue; // solo verso l'alto
+      const d=Math.hypot(u.x-tw.x, u.y-tw.y);
+      if(d<tw.range && d<best){ best=d; target=u; }
+    }
+    if(target && tw.cd<=0){
+      tw.cd=tw.rate;
+      // punto di fuoco (muzzle) spostato di poco
+      const mx=tw.x + (tw.muzzle?.x||0);
+      const my=tw.y + (tw.muzzle?.y||0);
+      fireProjectile({x:mx,y:my}, target, {
+        team:'P', heal:false, dmg:7, speed:540, colorA:'#a8c9ff', colorB:'#7fb6ff', kind:'tower'
+      });
+      // bagliore museruola
+      addHit(mx,my,'#9ec9ff');
+    }
+  }
+  // Torri nemiche → sparano a unità del giocatore nel raggio sotto di loro
+  for(const tw of state.enemyTowers){
+    tw.cd -= dt;
+    if(tw.hp<=0) continue;
+    let target=null, best=1e9;
+    for(const u of state.units.filter(u=>u.team==='P')){
+      if(u.y <= tw.y) continue; // solo verso il basso
+      const d=Math.hypot(u.x-tw.x, u.y-tw.y);
+      if(d<tw.range && d<best){ best=d; target=u; }
+    }
+    if(target && tw.cd<=0){
+      tw.cd=tw.rate;
+      const mx=tw.x + (tw.muzzle?.x||0);
+      const my=tw.y + (tw.muzzle?.y||0);
+      fireProjectile({x:mx,y:my}, target, {
+        team:'E', heal:false, dmg:7, speed:540, colorA:'#ffc1c1', colorB:'#ff9b9b', kind:'tower'
+      });
+      addHit(mx,my,'#ffc1c1');
+    }
+  }
+}
+
 function step(dt){
   if(state.playing){
     state.match.t+=dt; state.time+=dt;
@@ -155,30 +208,28 @@ function step(dt){
     state.manaP = clamp(state.manaP + state.manaRegen*60*dt, 0, state.manaMax);
     state.manaE = clamp(state.manaE + state.manaRegen*60*dt, 0, state.manaMax);
     ai(dt);
+    towerAI(dt);
   }
 
   // Unità
   for(const u of state.units){
     const enemy = u.team==='P' ? 'E' : 'P';
     const foes  = state.units.filter(x=>x.team===enemy && x.col===u.col);
-    const allies= state.units.filter(x=>x.team===u.team && x.col===u.col);
     const towers= (enemy==='E'?state.enemyTowers:state.playerTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
+    const allies= state.units.filter(x=>x.team===u.team && x.col===u.col);
     const allyT = (u.team==='P'?state.playerTowers:state.enemyTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
     u.cd-=dt;
 
     if(u.type==='healer'){
-      // ranged cura via proiettili verdi
-      // scegli bersaglio alleato più ferito in range
-      let tgt=null, bestGap=0, dist=1e9;
+      // ranged cura
+      let tgt=null, bestGap=0;
       for(const a of allies){
-        const gap=(a.maxhp - a.hp);
-        const d=Math.hypot(a.x-u.x,a.y-u.y);
-        if(gap>bestGap && d<=u.range){ bestGap=gap; dist=d; tgt=a; }
+        const gap=a.maxhp-a.hp, d=Math.hypot(a.x-u.x,a.y-u.y);
+        if(gap>bestGap && d<=u.range){ bestGap=gap; tgt=a; }
       }
       for(const t of allyT){
-        const gap=(t.max - t.hp);
-        const d=Math.hypot(t.x-u.x,t.y-u.y);
-        if(gap>bestGap && d<=u.range){ bestGap=gap; dist=d; tgt=t; }
+        const gap=t.max-t.hp, d=Math.hypot(t.x-u.x,t.y-u.y);
+        if(gap>bestGap && d<=u.range){ bestGap=gap; tgt=t; }
       }
       if(tgt && u.cd<=0){
         u.cd=u.rate;
@@ -187,7 +238,6 @@ function step(dt){
         u.y += u.spd * u.dir * 60 * dt;
       }
     } else if(u.type==='spark'){
-      // ranged danno via proiettili
       const {t,dist}=nearest(u,towers,foes);
       if(t && dist<=u.range){
         if(u.cd<=0){
@@ -211,17 +261,18 @@ function step(dt){
     p.x += p.vx * dt;
     p.y += p.vy * dt;
 
-    // scopo: colpire unità avversarie o torre (o alleati se heal)
     const enemyTeam = p.team==='P' ? 'E' : 'P';
-    const unitsPool = state.units.filter(u=> (p.heal? u.team===p.team : u.team===enemyTeam) );
-    // priorità: unità in corsia vicina al proiettile
+
+    // Se guaritore → cerca alleati; se danno → cerca nemici
+    const unitsPool = state.units.filter(u=> (p.heal ? u.team===p.team : u.team===enemyTeam) );
+
     let hitTarget=null;
     for(const u of unitsPool){
       const d=Math.hypot(u.x-p.x,u.y-p.y);
       if(d<14){ hitTarget=u; break; }
     }
     if(!hitTarget){
-      // prova torri (dipende da heal/damage e vicinanza)
+      // torri solo se danno oppure se heal verso le proprie torri
       const towers = p.heal ? (p.team==='P'?state.playerTowers:state.enemyTowers)
                             : (p.team==='P'?state.enemyTowers:state.playerTowers);
       for(const t of towers){
@@ -382,7 +433,7 @@ function drawProjectiles(){
     glow.addColorStop(0,p.colorA); glow.addColorStop(1,'rgba(255,255,255,0)');
     ctx.save(); ctx.globalAlpha=0.9; ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); ctx.restore();
 
-    // piccola luce frontale
+    // luce frontale
     ctx.fillStyle=p.colorB; ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI*2); ctx.fill();
   }
 }
@@ -472,6 +523,7 @@ function drawUI(){
       '• La barra in basso mostra QUANTO mana hai (con tacche).',
       '• L’IA usa mana separato: il tuo non scende da solo.',
       '• Spark spara proiettili, Healer lancia orbi di cura.',
+      '• 🔔 Le TORRI sparano automaticamente a corto raggio.',
       '• Vince chi fa più corone o abbatte entrambe le torri.',
       '• “Riavvia” ricomincia la partita.'
     ];
@@ -527,7 +579,9 @@ canvas.addEventListener('pointerdown',(e)=>{
         Object.assign(state,{playing:true,time:0});
         state.match.t=0; state.crowns.you=state.crowns.enemy=0;
         state.manaP=5; state.manaE=5; state.units.length=0; state.projectiles.length=0;
-        state.playerTowers.forEach(t=>t.hp=t.max); state.enemyTowers.forEach(t=>t.hp=t.max);
+        // reset torri
+        for(const t of state.playerTowers){ t.hp=t.max; t.cd=0; }
+        for(const t of state.enemyTowers){ t.hp=t.max; t.cd=0; }
         return;
       }
       if(state.playing && state.manaP>=r.cost){
