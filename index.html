@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Arena Vertical – v4.0.2 (safe)</title>
+<title>Arena Vertical – v4 (Progressi + Mazzo)</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1115;font-family:system-ui,Segoe UI,Roboto,Arial;}
   canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none; -webkit-tap-highlight-color:transparent;}
+  /* Overlay UI (home/deck) */
   .overlay{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:auto;}
   .panel{width:min(720px,92vw); max-height:90vh; overflow:auto; background:rgba(15,17,21,.96); border:1px solid #2c3c54; border-radius:16px; padding:16px; color:#eef; box-shadow:0 10px 40px rgba(0,0,0,.5)}
   .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
@@ -24,36 +25,18 @@
   .progressFill{height:100%; background:linear-gradient(90deg,#45d,#7af); width:0%}
   .unlock{padding:10px; border-radius:10px; background:#112436; border:1px solid #2c3c54; margin:8px 0}
   .small{font-size:13px; opacity:.85}
-  /* Error screen */
-  #errorUI{display:none}
-  .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; white-space:pre-wrap}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 
-<!-- Error catcher UI -->
-<div id="errorUI" class="overlay">
-  <div class="panel">
-    <div style="font-weight:700; font-size:20px; margin-bottom:8px">⚠️ Errore avvio gioco</div>
-    <div class="small">Se vedi questa schermata, qualcosa nel JavaScript si è interrotto (spesso per cache o dati vecchi).</div>
-    <div id="errMsg" class="mono" style="margin:10px 0; background:#0b1220; border:1px solid #2c3c54; padding:8px; border-radius:8px; max-height:30vh; overflow:auto;"></div>
-    <div class="row" style="margin-top:8px">
-      <button id="btnReset" class="btn">Reset dati e ricarica</button>
-      <div class="spacer"></div>
-      <button id="btnRetry" class="btn primary">Riprova avvio ▶</button>
-    </div>
-    <div class="small" style="margin-top:8px; opacity:.7">Suggerimento: apri con <b>?v=clean</b> per forzare l’aggiornamento della cache.</div>
-  </div>
-</div>
-
-<!-- Home / Deck UI -->
+<!-- Overlay HOME/DECK -->
 <div id="homeUI" class="overlay" style="display:none">
   <div class="panel">
     <div class="row" style="justify-content:space-between; align-items:flex-start">
       <div>
         <div style="font-weight:700; font-size:20px">Arena Vertical</div>
-        <div class="small">Versione v4.0.2 (safe) – Progressi &amp; Mazzo</div>
+        <div class="small">Versione v4 – Progressi &amp; Mazzo</div>
       </div>
       <button class="btn ghost" id="closeHome" title="Chiudi">✖</button>
     </div>
@@ -91,44 +74,7 @@
 </div>
 
 <script>
-/* ============== SAFE WRAPPER ============== */
-const BUILD_VERSION = 'v4.0.2';
-const STORAGE_KEY   = 'arena_progress_v4';
-const BUILD_KEY     = 'arena_build';
-const q=location.search||'';
-const forceClean = /[?&]v=clean\b/.test(q);
-
-function setError(e){
-  const ui=document.getElementById('errorUI');
-  document.getElementById('errMsg').textContent = (e && e.stack) ? e.stack : String(e);
-  ui.style.display='flex';
-}
-function clearError(){ document.getElementById('errorUI').style.display='none'; }
-document.getElementById('btnReset').onclick = ()=>{
-  try{ localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(BUILD_KEY); }catch{}
-  location.replace(location.pathname + '?v=clean');
-};
-document.getElementById('btnRetry').onclick = ()=>{
-  clearError();
-  try{ bootstrapGame(); }catch(err){ console.error(err); setError(err); }
-};
-
-/* Auto-reset se versione cambiata o forzo clean */
-try{
-  const prev = localStorage.getItem(BUILD_KEY);
-  if(prev !== BUILD_VERSION || forceClean){
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.setItem(BUILD_KEY, BUILD_VERSION);
-  }
-}catch{}
-
-/* Avvio protetto */
-try{ bootstrapGame(); }catch(err){ console.error(err); setError(err); }
-
-/* ============== GIOCO (tutto il codice) ============== */
-function bootstrapGame(){
-
-// ======= Canvas =======
+/* ================= Canvas & mapping ================= */
 const canvas=document.getElementById('game');
 const ctx=canvas.getContext('2d',{alpha:false});
 const W=720,H=1280,UI_H=200,FIELD_H=H-UI_H;
@@ -149,9 +95,10 @@ function toLogical(ev){
   return {x:(X-offX)/scale, y:(Y-offY)/scale};
 }
 
-// ======= Helpers & textures =======
+/* ================= Helpers & textures ================= */
 const rand=(a,b)=>a+Math.random()*(b-a);
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+
 let tex={grass:null,dirt:null};
 function makePattern(fillFn,w=128,h=128){
   const c=document.createElement('canvas'); c.width=w; c.height=h;
@@ -177,8 +124,10 @@ function softShadow(x,y,rx,ry,alpha=0.22){
   ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); ctx.fill(); ctx.restore();
 }
 
-// ======= Progressi & mazzo =======
+/* ================== Progressi & Mazzo ================== */
+const STORAGE_KEY='arena_progress_v4';
 const MILESTONES=[ {need:3, card:'rogue'}, {need:6, card:'mage'}, {need:10,card:'guardian'}, {need:15,card:'bomber'} ];
+
 const CARDS_MASTER={
   scout:{name:'Scout', cost:3, type:'scout', desc:'Meleè veloce', base:true},
   tank:{name:'Tank', cost:4, type:'tank', desc:'Meleè resistente', base:true},
@@ -189,21 +138,24 @@ const CARDS_MASTER={
   guardian:{name:'Guardian', cost:5, type:'guardian', desc:'Tank d\'élite', base:false},
   bomber:{name:'Bomber', cost:4, type:'bomber', desc:'Danni ad area', base:false}
 };
+
 function loadProgress(){
   try{
     const raw=localStorage.getItem(STORAGE_KEY);
-    if(raw){
-      const p=JSON.parse(raw);
-      if(!Array.isArray(p.unlocked)||!p.deck){ throw new Error('progresso corrotto'); }
-      return p;
-    }
-  }catch{ /* reset automatico */ localStorage.removeItem(STORAGE_KEY); }
-  return { trophies:0, unlocked:Object.keys(CARDS_MASTER).filter(k=>CARDS_MASTER[k].base), deck:['scout','tank','spark','healer'] };
+    if(raw) return JSON.parse(raw);
+  }catch{}
+  // default
+  return {
+    trophies:0,
+    unlocked:Object.keys(CARDS_MASTER).filter(k=>CARDS_MASTER[k].base), // base 4
+    deck:['scout','tank','spark','healer'] // default
+  };
 }
 function saveProgress(p){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(p)); }catch{} }
+
 let PROG=loadProgress();
 
-// ======= Home / Deck UI =======
+/* ======= Overlay Home/Deck ======= */
 const homeUI=document.getElementById('homeUI');
 const trofeiVal=document.getElementById('trofeiVal');
 const trofeiBar=document.getElementById('trofeiBar');
@@ -217,7 +169,7 @@ const btnCloseHome=document.getElementById('closeHome');
 
 function nextMilestoneNeed(){
   for(const m of MILESTONES){ if(PROG.trophies < m.need) return m.need; }
-  return PROG.trophies;
+  return PROG.trophies; // maxed
 }
 function refreshHome(){
   trofeiVal.textContent=PROG.trophies;
@@ -228,6 +180,7 @@ function refreshHome(){
   const fill = Math.max(0, Math.min(1, (PROG.trophies - lastNeed)/span))*100;
   trofeiBar.style.width = fill.toFixed(2)+'%';
 
+  // pool
   cardPoolDiv.innerHTML='';
   Object.entries(CARDS_MASTER).forEach(([key,c])=>{
     const unlocked = PROG.unlocked.includes(key);
@@ -235,10 +188,15 @@ function refreshHome(){
     el.className='cardBtn'+(unlocked?'':' lock');
     el.innerHTML=`<div style="font-weight:700">${c.name} (${c.cost})</div><div class="tag">${c.desc}</div>`;
     el.title = unlocked? 'Tocca per aggiungere al mazzo' : 'Bloccata';
-    el.onclick=()=>{ if(!unlocked) return; addToDeck(key); renderDeckSlots(); };
+    el.onclick=()=>{
+      if(!unlocked) return;
+      addToDeck(key);
+      renderDeckSlots();
+    };
     cardPoolDiv.appendChild(el);
   });
 
+  // deck slots
   renderDeckSlots();
 }
 function renderDeckSlots(){
@@ -249,32 +207,46 @@ function renderDeckSlots(){
     const el=document.createElement('div');
     el.className='slot'+(filled?' filled':'');
     el.innerHTML = filled ? `<div style="font-weight:700">${CARDS_MASTER[k].name} (${CARDS_MASTER[k].cost})</div><div class="tag">${CARDS_MASTER[k].desc}</div>` : '— vuoto —';
-    el.onclick=()=>{ PROG.deck[i]=null; saveProgress(PROG); renderDeckSlots(); };
+    el.onclick=()=>{ // remove
+      PROG.deck[i]=null; saveProgress(PROG); renderDeckSlots();
+    };
     deckSlotsDiv.appendChild(el);
   }
 }
 function addToDeck(cardKey){
+  // trova primo slot libero o sostituisci il meno recente
   const idx = PROG.deck.findIndex(x=>!x);
   if(idx>=0) PROG.deck[idx]=cardKey;
   else{
+    // se già presente non fare nulla, altrimenti rimpiazza il primo
     if(PROG.deck.includes(cardKey)) return;
     PROG.deck[0]=cardKey;
   }
   saveProgress(PROG);
 }
 btnClearDeck.onclick=()=>{ PROG.deck=[null,null,null,null]; saveProgress(PROG); renderDeckSlots(); };
-btnSaveDeck.onclick =()=>{ PROG.deck = PROG.deck.filter(Boolean).slice(0,4); while(PROG.deck.length<4) PROG.deck.push(null); saveProgress(PROG); };
-btnPlay.onclick=()=>{ const count=PROG.deck.filter(Boolean).length; if(count===0){ alert('Aggiungi almeno 1 carta al mazzo.'); return; } homeUI.style.display='none'; startMatchWithDeck(); };
+btnSaveDeck.onclick =()=>{ // pulisci eventuali null finali
+  PROG.deck = PROG.deck.filter(Boolean).slice(0,4);
+  while(PROG.deck.length<4) PROG.deck.push(null);
+  saveProgress(PROG);
+};
+btnPlay.onclick=()=>{
+  // serve almeno 1 carta
+  const count=PROG.deck.filter(Boolean).length;
+  if(count===0){ alert('Aggiungi almeno 1 carta al mazzo.'); return; }
+  homeUI.style.display='none';
+  startMatchWithDeck();
+};
 btnCloseHome.onclick=()=>{ homeUI.style.display='none'; };
 
-// ======= Stato di gioco / IA / rendering =======
+/* ====== Stato di gioco ====== */
 const COL_X=[W*0.18, W*0.5, W*0.82];
 const RIVER_Y=FIELD_H*0.5;
 let selectedCol=1, last=performance.now(), showHelp=false, notEnoughManaBlink=0;
 
 const state={
   manaP:5, manaE:5, manaMax:10, manaRegen:0.016,
-  time:0, playing:false,
+  time:0, playing:false, // parte da HOME
   match:{t:0,len:120},
   crowns:{you:0, enemy:0},
   playerTowers:[
@@ -286,9 +258,10 @@ const state={
     {x:W*0.75,y:95,hp:100,max:100, range:150, rate:1.0, cd:0, muzzle:{x:10,y:-18}}
   ],
   units:[], floats:[], particles:[], projectiles:[],
-  cardsUI:[]
+  cardsUI:[] // popolato da deck
 };
 
+/* ================== SFX ================== */
 let ac;
 function sfx(kind){ try{
   ac=ac||new (window.AudioContext||window.webkitAudioContext)();
@@ -297,22 +270,27 @@ function sfx(kind){ try{
   const [f,t,w]=(map[kind]||[440,.08,'square']); o.type=w; o.frequency.value=f; g.gain.value=.06;
   o.connect(g); g.connect(ac.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime+t); o.stop(ac.currentTime+t);
 }catch{} }
+
+/* ================== Utility effetti ================== */
 function addFloat(x,y,v,c){ state.floats.push({x,y,v,c,t:0}); }
 function addHit(x,y,c){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.2,-.2),life:rand(.25,.5),t:0,c}); }
 function damage(t,d){ if(!('hp'in t))return; t.hp-=d; const c=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-24,(d>=0?'-':'+')+Math.abs(d),c); addHit(t.x,t.y-6,c); sfx(d>=0?'hit':'heal'); }
 function heal(t,a){ if(!('hp'in t))return; const b=t.hp; t.hp=Math.min(t.max,t.hp+a); if(t.hp>b){ addFloat(t.x,t.y-24,'+'+Math.round(t.hp-b),'#6afc86'); sfx('heal'); }}
 
+/* ================== Unità & Proiettili ================== */
 function unitStats(type){
+  // Base 4 già noti; aggiunte nuove 4 carte
   switch(type){
     case 'scout':   return {spd:1.2,hp:16,atk:3,range:22,rate:.5, kind:'melee'};
     case 'tank':    return {spd:.7,hp:60,atk:6,range:26,rate:1.0, kind:'melee'};
     case 'spark':   return {spd:.9,hp:12,atk:8,range:120,rate:.9, kind:'ranged'};
     case 'healer':  return {spd:1.0,hp:18,atk:-6,range:90,rate:1.0, kind:'heal'};
-    case 'rogue':   return {spd:1.4,hp:14,atk:5,range:26,rate:.6, kind:'melee'};
-    case 'mage':    return {spd:.9,hp:14,atk:11,range:140,rate:1.1, kind:'ranged'};
-    case 'guardian':return {spd:.6,hp:85,atk:7,range:28,rate:1.0, kind:'melee'};
-    case 'bomber':  return {spd:.85,hp:18,atk:9,range:115,rate:1.2, kind:'ranged_aoe'};
-  } return {spd:1,hp:12,atk:4,range:24,rate:1.0, kind:'melee'};
+    case 'rogue':   return {spd:1.4,hp:14,atk:5,range:26,rate:.6, kind:'melee'};          // assalto rapido
+    case 'mage':    return {spd:.9,hp:14,atk:11,range:140,rate:1.1, kind:'ranged'};       // colpo forte
+    case 'guardian':return {spd:.6,hp:85,atk:7,range:28,rate:1.0, kind:'melee'};          // super tank
+    case 'bomber':  return {spd:.85,hp:18,atk:9,range:115,rate:1.2, kind:'ranged_aoe'};   // area
+  }
+  return {spd:1,hp:12,atk:4,range:24,rate:1.0, kind:'melee'};
 }
 function addUnit(team,col,type){
   const s=unitStats(type);
@@ -320,7 +298,9 @@ function addUnit(team,col,type){
   const u={team,x,y,dir,col,type,cd:0,maxhp:s.hp,hp:s.hp,spd:s.spd,atk:s.atk,range:s.range,rate:s.rate,kind:s.kind};
   state.units.push(u); sfx('place');
 }
+
 function fireProjectile({x,y}, target, opts){
+  // opts: {team, heal:false, dmg:8, speed:420, colorA, colorB, kind:'unit'|'tower', aoe:false, aoeR:24}
   const dx=target.x - x, dy=target.y - y, L=Math.hypot(dx,dy)||1;
   const vx = (dx/L) * (opts.speed||420);
   const vy = (dy/L) * (opts.speed||420);
@@ -332,6 +312,7 @@ function fireProjectile({x,y}, target, opts){
   sfx(opts.kind==='tower' ? 't_shoot' : 'shoot');
 }
 
+/* ================== IA ================== */
 let aiT=2.1;
 function ai(dt){
   aiT-=dt;
@@ -344,33 +325,48 @@ function ai(dt){
     if(m>=5) pool.push('guardian');
     if(pool.length){
       const tp=pool[(Math.random()*pool.length)|0];
+      const cost = Object.entries(CARDS_MASTER).find(([k])=>CARDS_MASTER[k].type===tp) ? null : null; // non usiamo
       const costMap={spark:2,scout:3,healer:3,rogue:3,tank:4,bomber:4,mage:4,guardian:5};
-      const c=costMap[tp]||3; state.manaE=Math.max(0, state.manaE-c); addUnit('E', (Math.random()*3)|0, tp);
+      const c=costMap[tp]||3;
+      state.manaE=Math.max(0, state.manaE-c);
+      addUnit('E', (Math.random()*3)|0, tp);
     }
   }
 }
-function towerAI(dt){
-  for(const tw of state.playerTowers){
-    tw.cd -= dt; if(tw.hp<=0) continue;
-    let target=null, best=1e9;
-    for(const u of state.units.filter(u=>u.team==='E')){ if(u.y >= tw.y){ const d=Math.hypot(u.x-tw.x, u.y-tw.y); if(d<tw.range && d<best){ best=d; target=u; } } }
-    if(target && tw.cd<=0){ tw.cd=tw.rate; const mx=tw.x+(tw.muzzle?.x||0), my=tw.y+(tw.muzzle?.y||0);
-      fireProjectile({x:mx,y:my}, target, {team:'P', heal:false, dmg:7, speed:540, colorA:'#a8c9ff', colorB:'#7fb6ff', kind:'tower'}); addHit(mx,my,'#9ec9ff'); }
-  }
-  for(const tw of state.enemyTowers){
-    tw.cd -= dt; if(tw.hp<=0) continue;
-    let target=null, best=1e9;
-    for(const u of state.units.filter(u=>u.team==='P')){ if(u.y <= tw.y){ const d=Math.hypot(u.x-tw.x, u.y-tw.y); if(d<tw.range && d<best){ best=d; target=u; } } }
-    if(target && tw.cd<=0){ tw.cd=tw.rate; const mx=tw.x+(tw.muzzle?.x||0), my=tw.y+(tw.muzzle?.y||0);
-      fireProjectile({x:mx,y:my}, target, {team:'E', heal:false, dmg:7, speed:540, colorA:'#ffc1c1', colorB:'#ff9b9b', kind:'tower'}); addHit(mx,my,'#ffc1c1'); }
-  }
-}
+
+/* ================== Update ================== */
 function nearest(u,towers,foes){
   let best=null,score=1e9;
   for(const f of foes){ const s=Math.abs(f.y*u.dir-u.y*u.dir)+Math.abs(f.x-u.x)*.25; if(s<score){score=s;best=f;} }
   if(!best){ let tg=null,sm=1e9; for(const t of towers){ const s=Math.abs(t.y-u.y)+Math.abs(t.x-u.x)*.3; if(t.hp>0 && s<sm){sm=s; tg=t;} } best=tg; }
   return {t:best, dist:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
 }
+
+function towerAI(dt){
+  for(const tw of state.playerTowers){
+    tw.cd -= dt; if(tw.hp<=0) continue;
+    let target=null, best=1e9;
+    for(const u of state.units.filter(u=>u.team==='E')){ if(u.y >= tw.y){ const d=Math.hypot(u.x-tw.x, u.y-tw.y); if(d<tw.range && d<best){ best=d; target=u; } } }
+    if(target && tw.cd<=0){
+      tw.cd=tw.rate;
+      const mx=tw.x + (tw.muzzle?.x||0), my=tw.y + (tw.muzzle?.y||0);
+      fireProjectile({x:mx,y:my}, target, {team:'P', heal:false, dmg:7, speed:540, colorA:'#a8c9ff', colorB:'#7fb6ff', kind:'tower'});
+      addHit(mx,my,'#9ec9ff');
+    }
+  }
+  for(const tw of state.enemyTowers){
+    tw.cd -= dt; if(tw.hp<=0) continue;
+    let target=null, best=1e9;
+    for(const u of state.units.filter(u=>u.team==='P')){ if(u.y <= tw.y){ const d=Math.hypot(u.x-tw.x, u.y-tw.y); if(d<tw.range && d<best){ best=d; target=u; } } }
+    if(target && tw.cd<=0){
+      tw.cd=tw.rate;
+      const mx=tw.x + (tw.muzzle?.x||0), my=tw.y + (tw.muzzle?.y||0);
+      fireProjectile({x:mx,y:my}, target, {team:'E', heal:false, dmg:7, speed:540, colorA:'#ffc1c1', colorB:'#ff9b9b', kind:'tower'});
+      addHit(mx,my,'#ffc1c1');
+    }
+  }
+}
+
 function step(dt){
   if(state.playing){
     state.match.t+=dt; state.time+=dt;
@@ -379,6 +375,8 @@ function step(dt){
     state.manaE = clamp(state.manaE + state.manaRegen*60*dt, 0, state.manaMax);
     ai(dt); towerAI(dt);
   }
+
+  // Unità
   for(const u of state.units){
     const enemy = u.team==='P' ? 'E' : 'P';
     const foes  = state.units.filter(x=>x.team===enemy && x.col===u.col);
@@ -398,21 +396,27 @@ function step(dt){
       const {t,dist}=nearest(u,towers,foes);
       if(t && dist<=u.range){
         if(u.cd<=0){ u.cd=u.rate;
-          fireProjectile(u, t, { team:u.team, heal:false, dmg:u.atk, speed:520, colorA:'#fffacd', colorB:(u.team==='P')?'#7fb6ff':'#ff9b9b',
-                                  aoe: u.kind==='ranged_aoe', aoeR:26 });
+          fireProjectile(u, t, {
+            team:u.team, heal:false, dmg:u.atk, speed:520,
+            colorA:'#fffacd', colorB:(u.team==='P')?'#7fb6ff':'#ff9b9b',
+            aoe: u.kind==='ranged_aoe', aoeR:26
+          });
         }
       } else u.y += u.spd * u.dir * 60 * dt;
 
-    } else {
+    } else { // melee
       const {t,dist}=nearest(u,towers,foes);
       if(t && dist<=u.range){ if(u.cd<=0){u.cd=u.rate; damage(t,u.atk);} }
       else u.y += u.spd * u.dir * 60 * dt;
     }
   }
+
+  // Proiettili
   for(const p of state.projectiles){
     p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt;
     const enemyTeam = p.team==='P' ? 'E' : 'P';
     const unitsPool = state.units.filter(u=> (p.heal ? u.team===p.team : u.team===enemyTeam) );
+
     let hitTarget=null;
     for(const u of unitsPool){ const d=Math.hypot(u.x-p.x,u.y-p.y); if(d<14){ hitTarget=u; break; } }
     if(!hitTarget){
@@ -421,12 +425,21 @@ function step(dt){
       for(const t of towers){ const d=Math.hypot(t.x-p.x,t.y-p.y); if(d<22){ hitTarget=t; break; } }
     }
     if(hitTarget){
-      if(p.aoe && !p.heal){ for(const u of state.units.filter(u=>u.team===(p.team==='P'?'E':'P'))){ const d=Math.hypot(u.x-p.x,u.y-p.y); if(d<=p.aoeR) damage(u,p.dmg); } addHit(p.x,p.y,(p.team==='P')?'#7fb6ff':'#ff9b9b'); }
+      if(p.aoe && !p.heal){
+        // danno ad area a tutte le unità nemiche vicine
+        for(const u of state.units.filter(u=>u.team===(p.team==='P'?'E':'P'))){
+          const d=Math.hypot(u.x-p.x,u.y-p.y); if(d<=p.aoeR) damage(u,p.dmg);
+        }
+        // piccola esplosione visiva
+        addHit(p.x,p.y,(p.team==='P')?'#7fb6ff':'#ff9b9b');
+      }
       if(p.heal) heal(hitTarget, p.dmg); else damage(hitTarget, p.dmg);
       p.life=0;
     }
   }
   state.projectiles = state.projectiles.filter(p=>p.life>0 && p.x>-20 && p.x<W+20 && p.y>-20 && p.y<FIELD_H+20);
+
+  // Pulizia ed esiti
   state.units = state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
   for(const f of state.floats){ f.t+=dt; f.y-=24*dt; } state.floats=state.floats.filter(f=>f.t<.9);
   for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.04; } state.particles=state.particles.filter(p=>p.t<p.life);
@@ -437,92 +450,163 @@ function step(dt){
   state.crowns.enemy = 2 - pAlive;
   if(state.playing && (pAlive===0 || eAlive===0)) endMatch(eAlive===0);
 }
+
+/* ================== Rendering (real look) ================== */
 function bg(){
   ctx.fillStyle=tex.grass; ctx.fillRect(0,0,W,FIELD_H);
   const vg=ctx.createRadialGradient(W/2,FIELD_H/2,Math.min(W,FIELD_H)*0.2, W/2,FIELD_H/2, Math.max(W,FIELD_H)*0.7);
   vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.18)'); ctx.fillStyle=vg; ctx.fillRect(0,0,W,FIELD_H);
+
   ctx.strokeStyle='#00000010'; ctx.lineWidth=1; ctx.beginPath();
   for(let y=0;y<=FIELD_H;y+=64){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
   for(let x=0;x<=W;x+=80){ ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H); }
   ctx.stroke();
+
   ctx.strokeStyle='#a99f72aa'; ctx.lineWidth=2;
   for(const x of COL_X){ ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,FIELD_H-20); ctx.stroke(); }
+
   ctx.fillStyle=tex.dirt; ctx.fillRect(0,RIVER_Y-28,W,12); ctx.fillRect(0,RIVER_Y+16,W,12);
+
   const t=state.time||0, h=26;
-  const grad=ctx.createLinearGradient(0,RIVER_Y-h/2,0,RIVER_Y+h/2); grad.addColorStop(0,'#b4ecff'); grad.addColorStop(.5,'#79c6e2'); grad.addColorStop(1,'#5ab3d3');
+  const grad=ctx.createLinearGradient(0,RIVER_Y-h/2,0,RIVER_Y+h/2);
+  grad.addColorStop(0,'#b4ecff'); grad.addColorStop(.5,'#79c6e2'); grad.addColorStop(1,'#5ab3d3');
   ctx.fillStyle=grad; ctx.fillRect(0,RIVER_Y-h/2,W,h);
   ctx.save(); ctx.globalAlpha=0.22; ctx.fillStyle='#ffffff';
-  for(let i=0;i<3;i++){ ctx.beginPath(); ctx.moveTo(0,RIVER_Y+Math.sin(t*1.2+i)*3);
-    for(let x=0;x<=W;x+=12){ const y = RIVER_Y + Math.sin((x*0.02)+(t*1.2+i))*3; ctx.lineTo(x,y); } ctx.lineTo(W,RIVER_Y+h/2); ctx.lineTo(0,RIVER_Y+h/2); ctx.closePath(); ctx.fill(); }
+  for(let i=0;i<3;i++){
+    ctx.beginPath(); ctx.moveTo(0,RIVER_Y+Math.sin(t*1.2+i)*3);
+    for(let x=0;x<=W;x+=12){ const y = RIVER_Y + Math.sin((x*0.02)+(t*1.2+i))*3; ctx.lineTo(x,y); }
+    ctx.lineTo(W,RIVER_Y+h/2); ctx.lineTo(0,RIVER_Y+h/2); ctx.closePath(); ctx.fill();
+  }
   ctx.restore();
-  const bridge=(cx)=>{ softShadow(cx,RIVER_Y+14,70,12,0.28); ctx.save(); ctx.translate(cx,RIVER_Y);
-    const g=ctx.createLinearGradient(-64,-18,-64,18); g.addColorStop(0,'#a86a33'); g.addColorStop(1,'#7a4a22');
-    ctx.fillStyle=g; ctx.fillRect(-64,-18,128,36); ctx.strokeStyle='#5d3b1d'; ctx.lineWidth=3; ctx.strokeRect(-64,-18,128,36);
-    ctx.strokeStyle='#6d461f'; for(let i=-58;i<=58;i+=14){ ctx.beginPath(); ctx.moveTo(i,-18); ctx.lineTo(i,18); ctx.stroke(); }
-    ctx.fillStyle='rgba(255,255,255,0.18)'; ctx.fillRect(-64,-18,128,4); ctx.restore(); };
+
+  const bridge=(cx)=>{
+    softShadow(cx,RIVER_Y+14,70,12,0.28);
+    ctx.save(); ctx.translate(cx,RIVER_Y);
+    const g=ctx.createLinearGradient(-64,-18,-64,18);
+    g.addColorStop(0,'#a86a33'); g.addColorStop(1,'#7a4a22');
+    ctx.fillStyle=g; ctx.fillRect(-64,-18,128,36);
+    ctx.strokeStyle='#5d3b1d'; ctx.lineWidth=3; ctx.strokeRect(-64,-18,128,36);
+    ctx.strokeStyle='#6d461f';
+    for(let i=-58;i<=58;i+=14){ ctx.beginPath(); ctx.moveTo(i,-18); ctx.lineTo(i,18); ctx.stroke(); }
+    ctx.fillStyle='rgba(255,255,255,0.18)'; ctx.fillRect(-64,-18,128,4);
+    ctx.restore();
+  };
   bridge(W*0.3); bridge(W*0.7);
+
   ctx.fillStyle='#1a7fff18'; ctx.fillRect(COL_X[selectedCol]-W*0.16,0,W*0.32,FIELD_H);
 }
+
 function tower(t,friendly){
   softShadow(t.x,t.y+12,30,10,0.28);
   const body=ctx.createLinearGradient(t.x,t.y-26,t.x,t.y+26);
   body.addColorStop(0,'#d6dee8'); body.addColorStop(.5,'#b7c2cf'); body.addColorStop(1,'#a5b1bf');
   ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle='#8795a6'; ctx.lineWidth=3; ctx.beginPath(); ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2); ctx.stroke();
-  ctx.save(); ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=8; ctx.fillStyle = friendly ? '#3b7ae0' : '#d14f4f'; ctx.beginPath(); ctx.arc(t.x,t.y,18,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  ctx.save(); ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=8;
+  ctx.fillStyle = friendly ? '#3b7ae0' : '#d14f4f'; ctx.beginPath(); ctx.arc(t.x,t.y,18,0,Math.PI*2); ctx.fill(); ctx.restore();
+
   ctx.fillStyle='#1e2935'; ctx.fillRect(t.x-6,t.y-3,12,10);
-  ctx.save(); ctx.globalAlpha=.8; const flame=ctx.createRadialGradient(t.x+20,t.y-10,0,t.x+20,t.y-10,12); flame.addColorStop(0,'rgba(255,210,100,0.9)'); flame.addColorStop(1,'rgba(255,140,60,0)'); ctx.fillStyle=flame; ctx.beginPath(); ctx.arc(t.x+20,t.y-10,12,0,Math.PI*2); ctx.fill(); ctx.restore();
-  const sway=Math.sin(state.time*2+t.x)*3; ctx.fillStyle = friendly ? '#6fe0ff' : '#ffd46f';
+  ctx.save(); ctx.globalAlpha=.8;
+  const flame=ctx.createRadialGradient(t.x+20,t.y-10,0,t.x+20,t.y-10,12);
+  flame.addColorStop(0,'rgba(255,210,100,0.9)'); flame.addColorStop(1,'rgba(255,140,60,0)');
+  ctx.fillStyle=flame; ctx.beginPath(); ctx.arc(t.x+20,t.y-10,12,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  const sway=Math.sin(state.time*2+t.x)*3;
+  ctx.fillStyle = friendly ? '#6fe0ff' : '#ffd46f';
   ctx.beginPath(); ctx.moveTo(t.x+24,t.y-14); ctx.lineTo(t.x+24+18+sway,t.y-18); ctx.lineTo(t.x+24,t.y-22); ctx.closePath(); ctx.fill();
+
   const w=78,h=8; ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(t.x-w/2,t.y-40,w,h);
-  const hp=ctx.createLinearGradient(t.x-w/2,0,t.x+w/2,0); hp.addColorStop(0,'#6be675'); hp.addColorStop(1,'#32c24b'); ctx.fillStyle=hp; ctx.fillRect(t.x-w/2,t.y-40,w*clamp(t.hp/t.max,0,1),h);
+  const hp=ctx.createLinearGradient(t.x-w/2,0,t.x+w/2,0); hp.addColorStop(0,'#6be675'); hp.addColorStop(1,'#32c24b');
+  ctx.fillStyle=hp; ctx.fillRect(t.x-w/2,t.y-40,w*clamp(t.hp/t.max,0,1),h);
 }
+
 function drawUnit(u){
   ctx.save(); ctx.globalAlpha=0.18; ctx.fillStyle=(u.team==='P')?'#7fb6ff':'#ff9b9b';
-  ctx.beginPath(); ctx.ellipse(u.x - u.dir*10, u.y+10, 18, 6, 0, 0, Math.PI*2); ctx.fill(); ctx.restore(); softShadow(u.x,u.y+8,16,6,0.25);
-  const edge=(u.team==='P')?'#0b4ea2':'#9b1c1c'; const core=(u.team==='P')?'#2f80ed':'#eb5757';
-  const rim=ctx.createLinearGradient(u.x-16,u.y-16,u.x+16,u.y+16); rim.addColorStop(0,'#ffffff20'); rim.addColorStop(1,'#00000015'); ctx.lineWidth=2; ctx.strokeStyle=edge;
-  if(['tank','guardian'].includes(u.type)){ const grd=ctx.createLinearGradient(u.x,u.y-12,u.x,u.y+12); grd.addColorStop(0,'#b1b6bf'); grd.addColorStop(1,core);
-    ctx.fillStyle=grd; const w= (u.type==='guardian')?40:36, h=(u.type==='guardian')?30:26; ctx.fillRect(u.x-w/2,u.y-h/2,w,h); ctx.strokeRect(u.x-w/2,u.y-h/2,w,h); ctx.fillStyle=rim; ctx.fillRect(u.x-w/2,u.y-h/2,w,6);
-  }else if(['scout','rogue'].includes(u.type)){ const g=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,14); g.addColorStop(0,'#ffffff'); g.addColorStop(1,core);
-    ctx.fillStyle=g; const r=(u.type==='rogue')?13:12; ctx.beginPath(); ctx.arc(u.x,u.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
-  }else if(['spark','mage','bomber'].includes(u.type)){ const g=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,18); g.addColorStop(0,'#fffacd'); g.addColorStop(1,(u.team==='P')?'#7fb6ff':'#ff9b9b');
-    ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(u.x-14,u.y+12); ctx.lineTo(u.x+14,u.y+12); ctx.lineTo(u.x,u.y-14); ctx.closePath(); ctx.fill(); ctx.strokeStyle=edge; ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(u.x - u.dir*10, u.y+10, 18, 6, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
+  softShadow(u.x,u.y+8,16,6,0.25);
+
+  const edge=(u.team==='P')?'#0b4ea2':'#9b1c1c';
+  const core=(u.team==='P')?'#2f80ed':'#eb5757';
+  const rim=ctx.createLinearGradient(u.x-16,u.y-16,u.x+16,u.y+16);
+  rim.addColorStop(0,'#ffffff20'); rim.addColorStop(1,'#00000015');
+  ctx.lineWidth=2; ctx.strokeStyle=edge;
+
+  if(['tank','guardian'].includes(u.type)){
+    const grd=ctx.createLinearGradient(u.x,u.y-12,u.x,u.y+12);
+    grd.addColorStop(0,'#b1b6bf'); grd.addColorStop(1,core);
+    ctx.fillStyle=grd; const w= (u.type==='guardian')?40:36, h=(u.type==='guardian')?30:26;
+    ctx.fillRect(u.x-w/2,u.y-h/2,w,h); ctx.strokeRect(u.x-w/2,u.y-h/2,w,h);
+    ctx.fillStyle=rim; ctx.fillRect(u.x-w/2,u.y-h/2,w,6);
+  }else if(['scout','rogue'].includes(u.type)){
+    const g=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,14);
+    g.addColorStop(0,'#ffffff'); g.addColorStop(1,core);
+    ctx.fillStyle=g; const r = (u.type==='rogue')?13:12;
+    ctx.beginPath(); ctx.arc(u.x,u.y,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  }else if(['spark','mage','bomber'].includes(u.type)){
+    const g=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,18);
+    g.addColorStop(0,'#fffacd'); g.addColorStop(1,(u.team==='P')?'#7fb6ff':'#ff9b9b');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(u.x-14,u.y+12); ctx.lineTo(u.x+14,u.y+12); ctx.lineTo(u.x,u.y-14); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle=edge; ctx.stroke();
     ctx.save(); ctx.globalAlpha=0.25; ctx.fillStyle=g; ctx.beginPath(); ctx.arc(u.x,u.y,20,0,Math.PI*2); ctx.fill(); ctx.restore();
-  }else{ ctx.fillStyle='#7cd37c'; ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#2d7a2d'; ctx.stroke(); ctx.fillStyle='#2d7a2d'; ctx.fillRect(u.x-2,u.y-8,4,16); ctx.fillRect(u.x-8,u.y-2,16,4); }
-  const ratio=clamp(u.hp/u.maxhp,0,1); ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(u.x-12,u.y-22,24,5);
-  const g2=ctx.createLinearGradient(u.x-12,0,u.x+12,0); g2.addColorStop(0,'#7af07a'); g2.addColorStop(1,'#40c15b'); ctx.fillStyle=g2; ctx.fillRect(u.x-12,u.y-22,24*ratio,5);
+  }else{ // healer
+    ctx.fillStyle='#7cd37c'; ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#2d7a2d'; ctx.stroke();
+    ctx.fillStyle='#2d7a2d'; ctx.fillRect(u.x-2,u.y-8,4,16); ctx.fillRect(u.x-8,u.y-2,16,4);
+  }
+
+  const ratio=clamp(u.hp/u.maxhp,0,1);
+  ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(u.x-12,u.y-22,24,5);
+  const g2=ctx.createLinearGradient(u.x-12,0,u.x+12,0); g2.addColorStop(0,'#7af07a'); g2.addColorStop(1,'#40c15b');
+  ctx.fillStyle=g2; ctx.fillRect(u.x-12,u.y-22,24*ratio,5);
 }
+
 function drawProjectiles(){
   for(const p of state.projectiles){
-    ctx.save(); ctx.globalAlpha=0.3; const trail=ctx.createLinearGradient(p.x - p.vx*0.02, p.y - p.vy*0.02, p.x, p.y);
-    trail.addColorStop(0,'rgba(255,255,255,0)'); trail.addColorStop(1, p.colorB); ctx.strokeStyle=trail; ctx.lineWidth=3; ctx.beginPath();
-    ctx.moveTo(p.x - p.vx*0.02, p.y - p.vy*0.02); ctx.lineTo(p.x, p.y); ctx.stroke(); ctx.restore();
-    const glow=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,8); glow.addColorStop(0,p.colorA); glow.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.save(); ctx.globalAlpha=0.3;
+    const trail=ctx.createLinearGradient(p.x - p.vx*0.02, p.y - p.vy*0.02, p.x, p.y);
+    trail.addColorStop(0,'rgba(255,255,255,0)'); trail.addColorStop(1, p.colorB);
+    ctx.strokeStyle=trail; ctx.lineWidth=3; ctx.beginPath();
+    ctx.moveTo(p.x - p.vx*0.02, p.y - p.vy*0.02); ctx.lineTo(p.x, p.y); ctx.stroke();
+    ctx.restore();
+
+    const glow=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,8);
+    glow.addColorStop(0,p.colorA); glow.addColorStop(1,'rgba(255,255,255,0)');
     ctx.save(); ctx.globalAlpha=0.9; ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); ctx.restore();
+
     ctx.fillStyle=p.colorB; ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI*2); ctx.fill();
   }
 }
-function drawCrowns(){ ctx.fillStyle='#0f1115aa'; ctx.fillRect(0,0,W,22);
-  ctx.font='bold 14px system-ui'; ctx.textAlign='left'; ctx.fillStyle='#ffd966'; ctx.fillText('🔱 '+state.crowns.you, 10, 16);
-  ctx.textAlign='right'; ctx.fillText(state.crowns.enemy+' 🔱', W-10, 16); }
 
+function drawCrowns(){
+  ctx.fillStyle='#0f1115aa'; ctx.fillRect(0,0,W,22);
+  ctx.font='bold 14px system-ui'; ctx.textAlign='left'; ctx.fillStyle='#ffd966'; ctx.fillText('🔱 '+state.crowns.you, 10, 16);
+  ctx.textAlign='right'; ctx.fillText(state.crowns.enemy+' 🔱', W-10, 16);
+}
+
+/* ================== UI & Mana ================== */
 let cardRects=[]; let helpBtn=null, helpClose=null;
 function buildCardsFromDeck(){
   state.cardsUI.length=0; cardRects.length=0;
+  // costruisci dalla PROG.deck (solo quelli presenti)
   const chosen = PROG.deck.filter(Boolean);
-  if(chosen.length===0){ chosen.push('scout','tank','spark','healer'); }
+  if(chosen.length===0){ // fallback di sicurezza
+    chosen.push('scout','tank','spark','healer');
+  }
   for(const key of chosen.slice(0,4)){
     const c = CARDS_MASTER[key];
     state.cardsUI.push({label:`${c.name} (${c.cost})`, type:c.type, cost:c.cost});
   }
+  // aggiungo il tasto riavvio
   state.cardsUI.push({label:'Riavvia', type:'restart', cost:0});
 }
 function drawManaBar(){
-  const x=24,y=FIELD_H+16,w=W-48,h=14; const m=state.manaP,M=state.manaMax;
+  const x=24,y=FIELD_H+16,w=W-48,h=14;
+  const m=state.manaP,M=state.manaMax;
   let fill='#61dafb'; if(m<3) fill='#ff6b6b'; else if(m<7) fill='#ffd166';
   if(m>=M-0.001){ const a=0.7+0.3*Math.sin(state.time*8); ctx.globalAlpha=a; }
-  ctx.fillStyle='rgba(32,42,58,0.95)'; ctx.fillRect(x,y,w,h); ctx.fillStyle=fill; ctx.fillRect(x,y,w*(m/M),h); ctx.globalAlpha=1;
+  ctx.fillStyle='rgba(32,42,58,0.95)'; ctx.fillRect(x,y,w,h);
+  ctx.fillStyle=fill; ctx.fillRect(x,y,w*(m/M),h);
+  ctx.globalAlpha=1;
   ctx.strokeStyle='#ffffff66'; ctx.lineWidth=1; for(let i=1;i<M;i++){ const tx=x+w*(i/M); ctx.beginPath(); ctx.moveTo(tx,y); ctx.lineTo(tx,y+h); ctx.stroke(); }
   ctx.fillStyle='#cfe7ff'; ctx.font='bold 14px system-ui'; ctx.textAlign='right'; ctx.fillText(`${Math.floor(m)} / ${M} 💧`, x+w, y-2+h+14);
 }
@@ -535,11 +619,15 @@ function roundRect(x,y,w,h,r,fill,stroke){
   if(fill) ctx.fill(); if(stroke) ctx.stroke();
 }
 function drawUI(){
-  ctx.fillStyle='rgba(10,12,16,0.86)'; ctx.fillRect(0,FIELD_H,W,UI_H); ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect(0,FIELD_H, W, 1);
+  ctx.fillStyle='rgba(10,12,16,0.86)'; ctx.fillRect(0,FIELD_H,W,UI_H);
+  ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect(0,FIELD_H, W, 1);
+
   helpBtn={x:W-44,y:FIELD_H+12,w:32,h:32};
   ctx.fillStyle='#1b2330'; ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2; roundRect(helpBtn.x,helpBtn.y,helpBtn.w,helpBtn.h,8,true,true);
   ctx.fillStyle='#eef'; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('?',helpBtn.x+helpBtn.w/2,helpBtn.y+helpBtn.h/2+1);
+
   drawManaBar();
+
   cardRects.length=0; const gap=14, h=70, y=FIELD_H+44;
   const w=(W-48-gap*(state.cardsUI.length-1))/state.cardsUI.length; let x=24;
   ctx.font='600 16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -551,15 +639,17 @@ function drawUI(){
     ctx.fillStyle = ok ? '#eef' : '#8b96aa'; ctx.fillText(c.label, x+w/2, y+h/2);
     cardRects.push({x,y,w,h,...c}); x+=w+gap;
   }
+
   if(!state.playing){
     ctx.fillStyle='#00000080'; ctx.fillRect(0,0,W,FIELD_H);
     ctx.fillStyle='#fff'; ctx.font='bold 36px system-ui'; ctx.textAlign='center';
     const win = state.crowns.you>state.crowns.enemy || state.enemyTowers.every(t=>t.hp<=0);
     ctx.fillText(win?'🏆 Vittoria!':'💀 Sconfitta', W/2, FIELD_H/2-20);
-    const trophyGain = state.crowns.you;
+    const trophyGain = state.crowns.you; // 0..2
     ctx.font='18px system-ui'; ctx.fillText(`Ricompensa: +${trophyGain} trofei`, W/2, FIELD_H/2+16);
     ctx.fillText('Tocca "Riavvia" o apri il mazzo (☰) per modifiche', W/2, FIELD_H/2+44);
   }
+
   if(showHelp){
     ctx.fillStyle='#000000cc'; ctx.fillRect(0,0,W,H);
     ctx.fillStyle='#fff'; ctx.font='bold 26px system-ui'; ctx.textAlign='center'; ctx.fillText('Guida rapida', W/2, 120);
@@ -570,7 +660,7 @@ function drawUI(){
       '• Il numero tra parentesi è il COSTO in mana.',
       '• Spark/Mage/Bomber sparano; Healer cura; Rogue/Scout picchiano rapidi; Tank/Guardian assorbono colpi.',
       '• Le TORRI sparano automaticamente a corto raggio.',
-      '• A fine partita ottieni trofei e sblocchi nuove carte.',
+      '• A fine partita ottieni trofei: sblocca nuove carte al raggiungimento dei traguardi.',
       '• “Riavvia” ricomincia la partita.'
     ];
     let y0=160, lh=26, x0=60; for(const s of lines){ ctx.fillText(s,x0,y0); y0+=lh; }
@@ -581,20 +671,28 @@ function drawUI(){
     helpClose={x:bx,y:by,w:bw,h:bh};
   } else helpClose=null;
 }
+
+/* ================== Loop ================== */
 function draw(){
   ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0f1115'; ctx.fillRect(0,0,canvas.width,canvas.height);
   ctx.setTransform(scale,0,0,scale,offX,offY);
-  bg(); drawCrowns(); state.playerTowers.forEach(t=>tower(t,true)); state.enemyTowers.forEach(t=>tower(t,false));
-  for(const u of state.units) drawUnit(u); drawProjectiles();
+  bg(); drawCrowns();
+  state.playerTowers.forEach(t=>tower(t,true));
+  state.enemyTowers.forEach(t=>tower(t,false));
+  for(const u of state.units) drawUnit(u);
+  drawProjectiles();
   for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.c; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
   for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.c; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
   drawUI();
 }
-let lastTs=performance.now();
-function loop(ts){ const dt=Math.min(0.033,(ts-lastTs)/1000); lastTs=ts; step(dt); if(notEnoughManaBlink>0) notEnoughManaBlink-=dt; draw(); requestAnimationFrame(loop); }
+function loop(ts){
+  const dt=Math.min(0.033,(ts-last)/1000); last=ts;
+  step(dt); if(notEnoughManaBlink>0) notEnoughManaBlink-=dt;
+  draw(); requestAnimationFrame(loop);
+}
 requestAnimationFrame(loop);
 
-// ======= Input =======
+/* ================== Input ================== */
 canvas.addEventListener('pointerdown',(e)=>{
   e.preventDefault();
   const {x,y}=toLogical(e);
@@ -603,16 +701,21 @@ canvas.addEventListener('pointerdown',(e)=>{
   if(showHelp && helpClose && x>=helpClose.x && x<=helpClose.x+helpClose.w && y>=helpClose.y && y<=helpClose.y+helpClose.h){ showHelp=false; return; }
   for(const r of cardRects){
     if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
-      if(r.type==='restart'){ startMatchWithDeck(); return; }
-      if(state.playing && state.manaP>=r.cost){ addUnit('P', selectedCol??1, r.type); state.manaP=Math.max(0, state.manaP-r.cost); }
-      else { notEnoughManaBlink=.25; }
+      if(r.type==='restart'){
+        startMatchWithDeck(); return;
+      }
+      if(state.playing && state.manaP>=r.cost){
+        addUnit('P', selectedCol??1, r.type);
+        state.manaP=Math.max(0, state.manaP-r.cost);
+      } else { notEnoughManaBlink=.25; }
       return;
     }
   }
 },{passive:false});
 
-// ======= Match & ricompense =======
+/* ================== Match control & Rewards ================== */
 function startMatchWithDeck(){
+  // reset
   Object.assign(state,{playing:true,time:0});
   state.match.t=0; state.crowns.you=state.crowns.enemy=0;
   state.manaP=5; state.manaE=5; state.units.length=0; state.projectiles.length=0; state.floats.length=0; state.particles.length=0;
@@ -620,25 +723,50 @@ function startMatchWithDeck(){
   for(const t of state.enemyTowers){ t.hp=t.max; t.cd=0; }
   buildCardsFromDeck();
 }
+
 function endMatch(win){
   state.playing=false; sfx(win?'win':'lose');
-  const gain = state.crowns.you;
+  const gain = state.crowns.you; // 0..2
   if(gain>0){
-    const before=PROG.trophies; PROG.trophies += gain;
-    // sblocchi
+    const before=PROG.trophies;
+    PROG.trophies += gain;
+    saveProgress(PROG);
+    // controlla sblocchi
+    let unlockedNow=[];
     for(const m of MILESTONES){
       if(before < m.need && PROG.trophies >= m.need){
-        if(!PROG.unlocked.includes(m.card)) PROG.unlocked.push(m.card);
+        if(!PROG.unlocked.includes(m.card)){
+          PROG.unlocked.push(m.card);
+          unlockedNow.push(m.card);
+        }
       }
     }
-    saveProgress(PROG);
+    if(unlockedNow.length){
+      saveProgress(PROG);
+      setTimeout(()=>{ showUnlockBanner(unlockedNow); }, 400);
+    }
   }
+  // riapri sinteticamente la home in overlay: lascia al giocatore la scelta
   setTimeout(()=>{ openHome(); }, 600);
 }
-function openHome(){ refreshHome(); homeUI.style.display='flex'; }
-openHome(); // apri all'avvio
 
-} // fine bootstrapGame
+function showUnlockBanner(cards){
+  const names = cards.map(k=>CARDS_MASTER[k].name).join(', ');
+  const div=document.createElement('div');
+  div.className='overlay';
+  div.innerHTML=`<div class="panel"><div style="font-weight:700; font-size:20px; margin-bottom:8px">🎉 Nuove carte sbloccate!</div><div class="small" style="margin-bottom:10px">${names}</div><button class="btn primary" id="okUnlock">OK</button></div>`;
+  document.body.appendChild(div);
+  sfx('unlock');
+  div.querySelector('#okUnlock').onclick=()=>{ div.remove(); openHome(); };
+}
+
+/* ================== Home open ================== */
+function openHome(){
+  refreshHome();
+  homeUI.style.display='flex';
+}
+// Apri home all'avvio (prima di giocare)
+openHome();
 </script>
 </body>
 </html>
