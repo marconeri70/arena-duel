@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Arena Vertical – v2.2</title>
+<title>Arena Vertical – v3 (real look + proiettili)</title>
 <style>
   html,body{margin:0;height:100%;background:#0f1115;}
   canvas{position:fixed; inset:0; width:100vw; height:100vh; display:block; touch-action:none; -webkit-tap-highlight-color:transparent;}
@@ -12,125 +12,235 @@
 <body>
 <canvas id="game"></canvas>
 <script>
-/* ===== Canvas & mapping (portrait) ===== */
+/* ================= Canvas & mapping (portrait) ================= */
 const canvas=document.getElementById('game');
 const ctx=canvas.getContext('2d',{alpha:false});
 const W=720,H=1280,UI_H=200,FIELD_H=H-UI_H;
 let scale=1,offX=0,offY=0;
 function resize(){
-  const r=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
-  canvas.width=Math.max(1,Math.round(r.width*dpr));
-  canvas.height=Math.max(1,Math.round(r.height*dpr));
-  scale=Math.min(canvas.width/W,canvas.height/H);
-  offX=Math.floor((canvas.width-W*scale)/2);
-  offY=Math.floor((canvas.height-H*scale)/2);
+  const r=canvas.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+  canvas.width = Math.max(1, Math.round(r.width*dpr));
+  canvas.height= Math.max(1, Math.round(r.height*dpr));
+  scale = Math.min(canvas.width/W, canvas.height/H);
+  offX  = Math.floor((canvas.width - W*scale)/2);
+  offY  = Math.floor((canvas.height- H*scale)/2);
 }
-addEventListener('resize',resize);addEventListener('orientationchange',resize);resize();
+addEventListener('resize',resize); addEventListener('orientationchange',resize); resize();
 function toLogical(ev){
   const r=canvas.getBoundingClientRect();
   const X=(ev.clientX-r.left)*(canvas.width/r.width);
   const Y=(ev.clientY-r.top )*(canvas.height/r.height);
-  return {x:(X-offX)/scale,y:(Y-offY)/scale};
+  return {x:(X-offX)/scale, y:(Y-offY)/scale};
 }
 
-/* ===== Stato ===== */
+/* ================= Helpers & textures (v3 visuals) ================= */
 const rand=(a,b)=>a+Math.random()*(b-a);
 const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
-const COL_X=[W*0.18,W*0.5,W*0.82], RIVER_Y=FIELD_H*0.5;
-let selectedCol=1,last=performance.now(),showHelp=false,notEnoughManaBlink=0;
+
+let tex={grass:null,dirt:null};
+function makePattern(fillFn,w=128,h=128){
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const g=c.getContext('2d'); fillFn(g,w,h); return g.createPattern(c,'repeat');
+}
+function buildTextures(){
+  // Erba
+  tex.grass = makePattern((g,w,h)=>{
+    const grd=g.createLinearGradient(0,0,0,h);
+    grd.addColorStop(0,'#eae3b4'); grd.addColorStop(1,'#d7cd91');
+    g.fillStyle=grd; g.fillRect(0,0,w,h);
+    for(let i=0;i<900;i++){
+      const a=0.04+Math.random()*0.05; g.fillStyle=`rgba(90,80,40,${a})`;
+      g.fillRect(Math.random()*w,Math.random()*h,1,1);
+    }
+  });
+  // Sabbia sponda
+  tex.dirt = makePattern((g,w,h)=>{
+    g.fillStyle='#cfae7a'; g.fillRect(0,0,w,h);
+    for(let i=0;i<600;i++){
+      g.fillStyle=`rgba(90,50,30,${0.05+Math.random()*0.07})`;
+      g.beginPath(); g.arc(Math.random()*w,Math.random()*h,Math.random()*1.2,0,Math.PI*2); g.fill();
+    }
+  });
+}
+buildTextures();
+
+function softShadow(x,y,rx,ry,alpha=0.22){
+  ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+}
+
+/* ================== Stato di gioco ================== */
+const COL_X=[W*0.18, W*0.5, W*0.82];
+const RIVER_Y=FIELD_H*0.5;
+let selectedCol=1, last=performance.now(), showHelp=false, notEnoughManaBlink=0;
 
 const state={
-  // 🔵 Mana separato: P (player) e E (enemy)
   manaP:5, manaE:5, manaMax:10, manaRegen:0.016,
   time:0, playing:true,
   match:{t:0,len:120},
-  crowns:{you:0,enemy:0},
+  crowns:{you:0, enemy:0},
   playerTowers:[{x:W*0.25,y:FIELD_H-95,hp:100,max:100},{x:W*0.75,y:FIELD_H-95,hp:100,max:100}],
   enemyTowers: [{x:W*0.25,y:95,hp:100,max:100},{x:W*0.75,y:95,hp:100,max:100}],
-  units:[],floats:[],particles:[]
+  units:[], floats:[], particles:[], projectiles:[]
 };
 
-/* ===== SFX minimali ===== */
+/* ================== SFX minimi ================== */
 let ac;
-function sfx(k){try{
+function sfx(kind){ try{
   ac=ac||new (window.AudioContext||window.webkitAudioContext)();
-  const o=ac.createOscillator(),g=ac.createGain();
-  const M={hit:[220,.05,'square'],place:[660,.06,'square'],win:[880,.35,'triangle'],lose:[160,.35,'triangle'],heal:[520,.07,'sine']};
-  const [f,t,w]=(M[k]||[440,.08,'square']);o.type=w;o.frequency.value=f;g.gain.value=.06;
-  o.connect(g);g.connect(ac.destination);o.start();g.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+t);o.stop(ac.currentTime+t);
-}catch{}}
+  const o=ac.createOscillator(), g=ac.createGain();
+  const map={hit:[220,.05,'square'], place:[660,.06,'square'], win:[880,.35,'triangle'], lose:[160,.35,'triangle'], heal:[520,.07,'sine'], shoot:[780,.05,'triangle']};
+  const [f,t,w]=(map[kind]||[440,.08,'square']); o.type=w; o.frequency.value=f; g.gain.value=.06;
+  o.connect(g); g.connect(ac.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime+t); o.stop(ac.currentTime+t);
+}catch{} }
 
-/* ===== Utility ===== */
-function addFloat(x,y,v,c){state.floats.push({x,y,v,c,t:0});}
-function addHit(x,y,c){for(let i=0;i<8;i++)state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.2,-.2),life:rand(.25,.5),t:0,c});}
-function damage(t,d){if(!('hp'in t))return;t.hp-=d;const c=d>=0?'#ffb36a':'#6afc86';addFloat(t.x,t.y-24,(d>=0?'-':'+')+Math.abs(d),c);addHit(t.x,t.y-6,c);sfx(d>=0?'hit':'heal');}
-function heal(t,a){if(!('hp'in t))return;const b=t.hp;t.hp=Math.min(t.max,t.hp+a);if(t.hp>b){addFloat(t.x,t.y-24,'+'+Math.round(t.hp-b),'#6afc86');sfx('heal');}}
+/* ================== Utility effetti ================== */
+function addFloat(x,y,v,c){ state.floats.push({x,y,v,c,t:0}); }
+function addHit(x,y,c){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.2,-.2),life:rand(.25,.5),t:0,c}); }
+function damage(t,d){ if(!('hp'in t))return; t.hp-=d; const c=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-24,(d>=0?'-':'+')+Math.abs(d),c); addHit(t.x,t.y-6,c); sfx(d>=0?'hit':'heal'); }
+function heal(t,a){ if(!('hp'in t))return; const b=t.hp; t.hp=Math.min(t.max,t.hp+a); if(t.hp>b){ addFloat(t.x,t.y-24,'+'+Math.round(t.hp-b),'#6afc86'); sfx('heal'); }}
 
-/* ===== Unità & IA ===== */
+/* ================== Unità & Proiettili ================== */
 function addUnit(team,col,type){
-  const x=COL_X[col],y=(team==='P')?FIELD_H-140:140,dir=(team==='P')?-1:1;
+  const x=COL_X[col], y=(team==='P')?FIELD_H-140:140, dir=(team==='P')?-1:1;
   const u={team,x,y,dir,col,type,cd:0,maxhp:1,hp:1,spd:1,atk:1,range:24,rate:1};
-  if(type==='scout') Object.assign(u,{spd:1.2,hp:16,maxhp:16,atk:3,range:22,rate:.5});
-  else if(type==='tank') Object.assign(u,{spd:.7,hp:60,maxhp:60,atk:6,range:26,rate:1.0});
-  else if(type==='spark') Object.assign(u,{spd:.9,hp:12,maxhp:12,atk:8,range:95,rate:1.2});
-  else if(type==='healer') Object.assign(u,{spd:1.0,hp:18,maxhp:18,atk:-6,range:70,rate:1.0});
+  if(type==='scout') Object.assign(u,{spd:1.2,hp:16,maxhp:16,atk:3,range:22,rate:.5});         // melee veloce
+  else if(type==='tank') Object.assign(u,{spd:.7,hp:60,maxhp:60,atk:6,range:26,rate:1.0});     // melee resistente
+  else if(type==='spark') Object.assign(u,{spd:.9,hp:12,maxhp:12,atk:8,range:120,rate:0.9});   // ranged
+  else if(type==='healer') Object.assign(u,{spd:1.0,hp:18,maxhp:18,atk:-6,range:90,rate:1.0}); // ranged cura
   state.units.push(u); sfx('place');
 }
-let aiT=2.2;
+
+function fireProjectile({x,y}, target, opts){
+  // opts: {team, heal:false, dmg:8, speed:420, colorA, colorB}
+  const dx=target.x - x, dy=target.y - y, L=Math.hypot(dx,dy)||1;
+  const vx = (dx/L) * (opts.speed||420);
+  const vy = (dy/L) * (opts.speed||420);
+  state.projectiles.push({
+    x, y, vx, vy, team:opts.team, heal:opts.heal||false, dmg:opts.dmg||8, life:1.5,
+    colorA:opts.colorA||'#fffacd', colorB:opts.colorB||'#7fb6ff', targetRef:target
+  });
+  sfx('shoot');
+}
+
+/* ================== IA ================== */
+let aiT=2.1;
 function ai(dt){
   aiT-=dt;
   if(aiT<=0 && state.playing){
-    aiT=rand(1.4,2.6);
-    // ❗️ora l'IA usa SOLO manaE
+    aiT=rand(1.3,2.5);
     const m=Math.floor(state.manaE), pool=[];
     if(m>=2) pool.push('spark'); if(m>=3) pool.push('scout','healer'); if(m>=4) pool.push('tank');
     if(pool.length){
       const tp=pool[(Math.random()*pool.length)|0];
-      const cost = tp==='tank'?4 : (tp==='scout'||tp==='healer'?3:2);
-      state.manaE=Math.max(0,state.manaE-cost);
-      addUnit('E',(Math.random()*3)|0,tp);
+      const cost=tp==='tank'?4:(tp==='scout'||tp==='healer'?3:2);
+      state.manaE=Math.max(0, state.manaE-cost);
+      addUnit('E', (Math.random()*3)|0, tp);
     }
   }
 }
+
+/* ================== Update ================== */
 function nearest(u,towers,foes){
   let best=null,score=1e9;
-  for(const f of foes){const s=Math.abs(f.y*u.dir-u.y*u.dir)+Math.abs(f.x-u.x)*.25;if(s<score){score=s;best=f;}}
-  if(!best){let tg=null,sm=1e9;for(const t of towers){const s=Math.abs(t.y-u.y)+Math.abs(t.x-u.x)*.3;if(t.hp>0&&s<sm){sm=s;tg=t;}}best=tg;}
-  return {t:best,dist:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
+  for(const f of foes){ const s=Math.abs(f.y*u.dir-u.y*u.dir)+Math.abs(f.x-u.x)*.25; if(s<score){score=s;best=f;} }
+  if(!best){ let tg=null,sm=1e9; for(const t of towers){ const s=Math.abs(t.y-u.y)+Math.abs(t.x-u.x)*.3; if(t.hp>0 && s<sm){sm=s; tg=t;} } best=tg; }
+  return {t:best, dist:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
 }
 
-/* ===== Update ===== */
 function step(dt){
   if(state.playing){
     state.match.t+=dt; state.time+=dt;
-    if(state.match.t>=state.match.len){state.playing=false; sfx('lose');}
-    // 🔵 rigenera separatamente
+    if(state.match.t>=state.match.len){ state.playing=false; sfx('lose'); }
     state.manaP = clamp(state.manaP + state.manaRegen*60*dt, 0, state.manaMax);
     state.manaE = clamp(state.manaE + state.manaRegen*60*dt, 0, state.manaMax);
     ai(dt);
   }
+
+  // Unità
   for(const u of state.units){
-    const enemy=u.team==='P'?'E':'P';
-    const foes=state.units.filter(x=>x.team===enemy && x.col===u.col);
-    const allies=state.units.filter(x=>x.team===u.team && x.col===u.col);
-    const towers=(enemy==='E'?state.enemyTowers:state.playerTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
-    const allyT =(u.team==='P'?state.playerTowers:state.enemyTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
+    const enemy = u.team==='P' ? 'E' : 'P';
+    const foes  = state.units.filter(x=>x.team===enemy && x.col===u.col);
+    const allies= state.units.filter(x=>x.team===u.team && x.col===u.col);
+    const towers= (enemy==='E'?state.enemyTowers:state.playerTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
+    const allyT = (u.team==='P'?state.playerTowers:state.enemyTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
     u.cd-=dt;
+
     if(u.type==='healer'){
-      let target=null,dist=1e9;
-      for(const a of allies){const d=Math.hypot(a.x-u.x,a.y-u.y); if(a.hp<a.maxhp && d<dist){dist=d;target=a;}}
-      for(const t of allyT){const d=Math.hypot(t.x-u.x,t.y-u.y); if(t.hp<t.max && d<dist){dist=d;target=t;}}
-      if(target && dist<=u.range){ if(u.cd<=0){u.cd=u.rate; heal(target,Math.abs(u.atk)); } }
-      else u.y += u.spd*u.dir*60*dt;
-    }else{
+      // ranged cura via proiettili verdi
+      // scegli bersaglio alleato più ferito in range
+      let tgt=null, bestGap=0, dist=1e9;
+      for(const a of allies){
+        const gap=(a.maxhp - a.hp);
+        const d=Math.hypot(a.x-u.x,a.y-u.y);
+        if(gap>bestGap && d<=u.range){ bestGap=gap; dist=d; tgt=a; }
+      }
+      for(const t of allyT){
+        const gap=(t.max - t.hp);
+        const d=Math.hypot(t.x-u.x,t.y-u.y);
+        if(gap>bestGap && d<=u.range){ bestGap=gap; dist=d; tgt=t; }
+      }
+      if(tgt && u.cd<=0){
+        u.cd=u.rate;
+        fireProjectile(u, tgt, {team:u.team, heal:true, dmg:Math.abs(u.atk), speed:360, colorA:'#a8f5b0', colorB:'#2bd96a'});
+      }else{
+        u.y += u.spd * u.dir * 60 * dt;
+      }
+    } else if(u.type==='spark'){
+      // ranged danno via proiettili
+      const {t,dist}=nearest(u,towers,foes);
+      if(t && dist<=u.range){
+        if(u.cd<=0){
+          u.cd=u.rate;
+          fireProjectile(u, t, {team:u.team, heal:false, dmg:u.atk, speed:520, colorA:'#fffacd', colorB:(u.team==='P')?'#7fb6ff':'#ff9b9b'});
+        }
+      } else {
+        u.y += u.spd * u.dir * 60 * dt;
+      }
+    } else {
+      // melee
       const {t,dist}=nearest(u,towers,foes);
       if(t && dist<=u.range){ if(u.cd<=0){u.cd=u.rate; damage(t,u.atk);} }
-      else u.y += u.spd*u.dir*60*dt;
+      else u.y += u.spd * u.dir * 60 * dt;
     }
   }
-  state.units=state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
-  for(const f of state.floats){f.t+=dt;f.y-=24*dt;} state.floats=state.floats.filter(f=>f.t<.9);
-  for(const p of state.particles){p.t+=dt;p.x+=p.vx*60*dt;p.y+=p.vy*60*dt;p.vy+=.04;} state.particles=state.particles.filter(p=>p.t<p.life);
+
+  // Proiettili
+  for(const p of state.projectiles){
+    p.life -= dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    // scopo: colpire unità avversarie o torre (o alleati se heal)
+    const enemyTeam = p.team==='P' ? 'E' : 'P';
+    const unitsPool = state.units.filter(u=> (p.heal? u.team===p.team : u.team===enemyTeam) );
+    // priorità: unità in corsia vicina al proiettile
+    let hitTarget=null;
+    for(const u of unitsPool){
+      const d=Math.hypot(u.x-p.x,u.y-p.y);
+      if(d<14){ hitTarget=u; break; }
+    }
+    if(!hitTarget){
+      // prova torri (dipende da heal/damage e vicinanza)
+      const towers = p.heal ? (p.team==='P'?state.playerTowers:state.enemyTowers)
+                            : (p.team==='P'?state.enemyTowers:state.playerTowers);
+      for(const t of towers){
+        const d=Math.hypot(t.x-p.x,t.y-p.y);
+        if(d<22){ hitTarget=t; break; }
+      }
+    }
+    if(hitTarget){
+      if(p.heal) heal(hitTarget, p.dmg);
+      else damage(hitTarget, p.dmg);
+      p.life=0;
+    }
+  }
+  state.projectiles = state.projectiles.filter(p=>p.life>0 && p.x>-20 && p.x<W+20 && p.y>-20 && p.y<FIELD_H+20);
+
+  // Pulizia ed esiti
+  state.units = state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
+  for(const f of state.floats){ f.t+=dt; f.y-=24*dt; } state.floats=state.floats.filter(f=>f.t<.9);
+  for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.04; } state.particles=state.particles.filter(p=>p.t<p.life);
 
   const pAlive=state.playerTowers.filter(t=>t.hp>0).length;
   const eAlive=state.enemyTowers.filter(t=>t.hp>0).length;
@@ -139,48 +249,152 @@ function step(dt){
   if(state.playing && (pAlive===0 || eAlive===0)){ state.playing=false; sfx(eAlive===0?'win':'lose'); }
 }
 
-/* ===== Draw ===== */
+/* ================== Rendering (real look) ================== */
 function bg(){
-  const g=ctx.createLinearGradient(0,0,0,FIELD_H); g.addColorStop(0,'#efe7be'); g.addColorStop(1,'#d9cf98');
-  ctx.fillStyle=g; ctx.fillRect(0,0,W,FIELD_H);
-  ctx.strokeStyle='#00000012'; ctx.lineWidth=1; ctx.beginPath();
-  for(let y=0;y<=FIELD_H;y+=64){ctx.moveTo(0,y);ctx.lineTo(W,y);} for(let x=0;x<=W;x+=80){ctx.moveTo(x,0);ctx.lineTo(x,FIELD_H);} ctx.stroke();
-  ctx.strokeStyle='#b9b083'; ctx.lineWidth=2; for(const x of COL_X){ctx.beginPath();ctx.moveTo(x,20);ctx.lineTo(x,FIELD_H-20);ctx.stroke();}
-  const r=ctx.createLinearGradient(0,RIVER_Y-14,0,RIVER_Y+14); r.addColorStop(0,'#9adcf0'); r.addColorStop(.5,'#7bc6de'); r.addColorStop(1,'#64b7d4');
-  ctx.fillStyle=r; ctx.fillRect(0,RIVER_Y-14,W,28);
-  const bridge=cx=>{ctx.save();ctx.translate(cx,RIVER_Y);ctx.fillStyle='#0000002a';ctx.beginPath();ctx.ellipse(0,14,64,10,0,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='#8c5a2c';ctx.strokeStyle='#5e3c1c';ctx.lineWidth=3;ctx.fillRect(-64,-18,128,36);ctx.strokeRect(-64,-18,128,36);
-    ctx.strokeStyle='#6d461f';for(let i=-58;i<=58;i+=14){ctx.beginPath();ctx.moveTo(i,-18);ctx.lineTo(i,18);ctx.stroke();}ctx.restore();};
-  bridge(W*0.3);bridge(W*0.7);
+  // Campo erba + vignetta
+  ctx.fillStyle=tex.grass; ctx.fillRect(0,0,W,FIELD_H);
+  const vg=ctx.createRadialGradient(W/2,FIELD_H/2,Math.min(W,FIELD_H)*0.2, W/2,FIELD_H/2, Math.max(W,FIELD_H)*0.7);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.18)'); ctx.fillStyle=vg; ctx.fillRect(0,0,W,FIELD_H);
+
+  // Griglia sottile
+  ctx.strokeStyle='#00000010'; ctx.lineWidth=1; ctx.beginPath();
+  for(let y=0;y<=FIELD_H;y+=64){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
+  for(let x=0;x<=W;x+=80){ ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H); }
+  ctx.stroke();
+
+  // Corsie
+  ctx.strokeStyle='#a99f72aa'; ctx.lineWidth=2;
+  for(const x of COL_X){ ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,FIELD_H-20); ctx.stroke(); }
+
+  // Sponde
+  ctx.fillStyle=tex.dirt; ctx.fillRect(0,RIVER_Y-28,W,12); ctx.fillRect(0,RIVER_Y+16,W,12);
+
+  // Acqua animata
+  const t=state.time||0, h=26;
+  const grad=ctx.createLinearGradient(0,RIVER_Y-h/2,0,RIVER_Y+h/2);
+  grad.addColorStop(0,'#b4ecff'); grad.addColorStop(.5,'#79c6e2'); grad.addColorStop(1,'#5ab3d3');
+  ctx.fillStyle=grad; ctx.fillRect(0,RIVER_Y-h/2,W,h);
+  ctx.save(); ctx.globalAlpha=0.22; ctx.fillStyle='#ffffff';
+  for(let i=0;i<3;i++){
+    ctx.beginPath(); ctx.moveTo(0,RIVER_Y+Math.sin(t*1.2+i)*3);
+    for(let x=0;x<=W;x+=12){ const y = RIVER_Y + Math.sin((x*0.02)+(t*1.2+i))*3; ctx.lineTo(x,y); }
+    ctx.lineTo(W,RIVER_Y+h/2); ctx.lineTo(0,RIVER_Y+h/2); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+
+  // Ponti in rilievo
+  const bridge=(cx)=>{
+    softShadow(cx,RIVER_Y+14,70,12,0.28);
+    ctx.save(); ctx.translate(cx,RIVER_Y);
+    const g=ctx.createLinearGradient(-64,-18,-64,18);
+    g.addColorStop(0,'#a86a33'); g.addColorStop(1,'#7a4a22');
+    ctx.fillStyle=g; ctx.fillRect(-64,-18,128,36);
+    ctx.strokeStyle='#5d3b1d'; ctx.lineWidth=3; ctx.strokeRect(-64,-18,128,36);
+    ctx.strokeStyle='#6d461f';
+    for(let i=-58;i<=58;i+=14){ ctx.beginPath(); ctx.moveTo(i,-18); ctx.lineTo(i,18); ctx.stroke(); }
+    ctx.fillStyle='rgba(255,255,255,0.18)'; ctx.fillRect(-64,-18,128,4);
+    ctx.restore();
+  };
+  bridge(W*0.3); bridge(W*0.7);
+
+  // Corsia selezionata
   ctx.fillStyle='#1a7fff18'; ctx.fillRect(COL_X[selectedCol]-W*0.16,0,W*0.32,FIELD_H);
 }
+
 function tower(t,friendly){
-  ctx.fillStyle='#00000022';ctx.beginPath();ctx.ellipse(t.x,t.y+12,28,9,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#b9c2cc';ctx.strokeStyle='#8b97a5';ctx.lineWidth=3;ctx.beginPath();ctx.arc(t.x,t.y,26,0,Math.PI*2);ctx.fill();ctx.stroke();
-  ctx.fillStyle=friendly?'#3b7ae0':'#d14f4f';ctx.beginPath();ctx.arc(t.x,t.y,20,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#f4cd63';ctx.strokeStyle='#9a7b1a';ctx.beginPath();
-  ctx.moveTo(t.x-15,t.y-20);ctx.lineTo(t.x-5,t.y-6);ctx.lineTo(t.x+5,t.y-20);ctx.lineTo(t.x+15,t.y-6);ctx.lineTo(t.x+15,t.y-2);ctx.lineTo(t.x-15,t.y-2);ctx.closePath();ctx.fill();ctx.stroke();
-  const sway=Math.sin(state.time*2+t.x)*3;ctx.fillStyle=friendly?'#6fe0ff':'#ffd46f';ctx.beginPath();ctx.moveTo(t.x+20,t.y-10);ctx.lineTo(t.x+20+16+sway,t.y-16);ctx.lineTo(t.x+20,t.y-22);ctx.closePath();ctx.fill();
-  const w=72,h=8;ctx.fillStyle='#00000055';ctx.fillRect(t.x-w/2,t.y-36,w,h);ctx.fillStyle='#4ee46a';ctx.fillRect(t.x-w/2,t.y-36,w*clamp(t.hp/t.max,0,1),h);
-}
-function drawUnit(u){
-  ctx.fillStyle='#00000025';ctx.beginPath();ctx.ellipse(u.x,u.y+8,16,6,0,0,Math.PI*2);ctx.fill();
-  if(u.team==='P'){ctx.strokeStyle='#0b4ea2';ctx.fillStyle='#2f80ed';}else{ctx.strokeStyle='#9b1c1c';ctx.fillStyle='#eb5757';}
-  ctx.lineWidth=2;
-  if(u.type==='tank'){ctx.fillRect(u.x-16,u.y-12,32,24);ctx.strokeRect(u.x-16,u.y-12,32,24);}
-  else if(u.type==='scout'){ctx.beginPath();ctx.arc(u.x,u.y,12,0,Math.PI*2);ctx.fill();ctx.stroke();}
-  else if(u.type==='spark'){const grd=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,16);grd.addColorStop(0,'#fffacd');grd.addColorStop(1,(u.team==='P')?'#2f80ed':'#eb5757');ctx.fillStyle=grd;
-    ctx.beginPath();ctx.moveTo(u.x-14,u.y+10);ctx.lineTo(u.x+14,u.y+10);ctx.lineTo(u.x,u.y-12);ctx.closePath();ctx.fill();ctx.strokeStyle=(u.team==='P')?'#0b4ea2':'#9b1c1c';ctx.stroke();}
-  else{ctx.fillStyle='#7cd37c';ctx.strokeStyle='#2d7a2d';ctx.beginPath();ctx.arc(u.x,u.y,12,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle='#2d7a2d';ctx.fillRect(u.x-2,u.y-8,4,16);ctx.fillRect(u.x-8,u.y-2,16,4);}
-  ctx.fillStyle='#00000055';ctx.fillRect(u.x-12,u.y-20,24,4);ctx.fillStyle='#4ee46a';ctx.fillRect(u.x-12,u.y-20,24*clamp(u.hp/u.maxhp,0,1),4);
-}
-function drawCrowns(){
-  ctx.fillStyle='#0f1115aa';ctx.fillRect(0,0,W,22);
-  ctx.font='bold 14px system-ui';ctx.textAlign='left';ctx.fillStyle='#ffd966';ctx.fillText('🔱 '+state.crowns.you,10,16);
-  ctx.textAlign='right';ctx.fillText(state.crowns.enemy+' 🔱',W-10,16);
+  softShadow(t.x,t.y+12,30,10,0.28);
+  const body=ctx.createLinearGradient(t.x,t.y-26,t.x,t.y+26);
+  body.addColorStop(0,'#d6dee8'); body.addColorStop(.5,'#b7c2cf'); body.addColorStop(1,'#a5b1bf');
+  ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#8795a6'; ctx.lineWidth=3; ctx.beginPath(); ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2); ctx.stroke();
+
+  ctx.save(); ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=8;
+  ctx.fillStyle = friendly ? '#3b7ae0' : '#d14f4f'; ctx.beginPath(); ctx.arc(t.x,t.y,18,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  ctx.fillStyle='#1e2935'; ctx.fillRect(t.x-6,t.y-3,12,10);
+  ctx.save(); ctx.globalAlpha=.8;
+  const flame=ctx.createRadialGradient(t.x+20,t.y-10,0,t.x+20,t.y-10,12);
+  flame.addColorStop(0,'rgba(255,210,100,0.9)'); flame.addColorStop(1,'rgba(255,140,60,0)');
+  ctx.fillStyle=flame; ctx.beginPath(); ctx.arc(t.x+20,t.y-10,12,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  const sway=Math.sin(state.time*2+t.x)*3;
+  ctx.fillStyle = friendly ? '#6fe0ff' : '#ffd46f';
+  ctx.beginPath(); ctx.moveTo(t.x+24,t.y-14); ctx.lineTo(t.x+24+18+sway,t.y-18); ctx.lineTo(t.x+24,t.y-22); ctx.closePath(); ctx.fill();
+
+  const w=78,h=8; ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(t.x-w/2,t.y-40,w,h);
+  const hp=ctx.createLinearGradient(t.x-w/2,0,t.x+w/2,0); hp.addColorStop(0,'#6be675'); hp.addColorStop(1,'#32c24b');
+  ctx.fillStyle=hp; ctx.fillRect(t.x-w/2,t.y-40,w*clamp(t.hp/t.max,0,1),h);
 }
 
-/* --- UI cards & mana --- */
+function drawUnit(u){
+  // Scia
+  ctx.save(); ctx.globalAlpha=0.18; ctx.fillStyle=(u.team==='P')?'#7fb6ff':'#ff9b9b';
+  ctx.beginPath(); ctx.ellipse(u.x - u.dir*10, u.y+10, 18, 6, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
+
+  softShadow(u.x,u.y+8,16,6,0.25);
+
+  const edge=(u.team==='P')?'#0b4ea2':'#9b1c1c';
+  const core=(u.team==='P')?'#2f80ed':'#eb5757';
+  const rim=ctx.createLinearGradient(u.x-16,u.y-16,u.x+16,u.y+16);
+  rim.addColorStop(0,'#ffffff20'); rim.addColorStop(1,'#00000015');
+  ctx.lineWidth=2; ctx.strokeStyle=edge;
+
+  if(u.type==='tank'){
+    const grd=ctx.createLinearGradient(u.x,u.y-12,u.x,u.y+12);
+    grd.addColorStop(0,'#b1b6bf'); grd.addColorStop(1,core);
+    ctx.fillStyle=grd; ctx.fillRect(u.x-18,u.y-13,36,26); ctx.strokeRect(u.x-18,u.y-13,36,26);
+    ctx.fillStyle=rim; ctx.fillRect(u.x-18,u.y-13,36,6);
+  }else if(u.type==='scout'){
+    const g=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,14);
+    g.addColorStop(0,'#ffffff'); g.addColorStop(1,core);
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  }else if(u.type==='spark'){
+    const g=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,18);
+    g.addColorStop(0,'#fffacd'); g.addColorStop(1,(u.team==='P')?'#7fb6ff':'#ff9b9b');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(u.x-14,u.y+12); ctx.lineTo(u.x+14,u.y+12); ctx.lineTo(u.x,u.y-14); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle=edge; ctx.stroke();
+    ctx.save(); ctx.globalAlpha=0.25; ctx.fillStyle=g; ctx.beginPath(); ctx.arc(u.x,u.y,20,0,Math.PI*2); ctx.fill(); ctx.restore();
+  }else{ // healer
+    ctx.fillStyle='#7cd37c'; ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#2d7a2d'; ctx.stroke();
+    ctx.fillStyle='#2d7a2d'; ctx.fillRect(u.x-2,u.y-8,4,16); ctx.fillRect(u.x-8,u.y-2,16,4);
+  }
+
+  // Barra HP
+  const ratio=clamp(u.hp/u.maxhp,0,1);
+  ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(u.x-12,u.y-22,24,5);
+  const g2=ctx.createLinearGradient(u.x-12,0,u.x+12,0); g2.addColorStop(0,'#7af07a'); g2.addColorStop(1,'#40c15b');
+  ctx.fillStyle=g2; ctx.fillRect(u.x-12,u.y-22,24*ratio,5);
+}
+
+function drawProjectiles(){
+  for(const p of state.projectiles){
+    // scia
+    ctx.save(); ctx.globalAlpha=0.3;
+    const trail=ctx.createLinearGradient(p.x - p.vx*0.02, p.y - p.vy*0.02, p.x, p.y);
+    trail.addColorStop(0,'rgba(255,255,255,0)');
+    trail.addColorStop(1, p.colorB);
+    ctx.strokeStyle=trail; ctx.lineWidth=3; ctx.beginPath();
+    ctx.moveTo(p.x - p.vx*0.02, p.y - p.vy*0.02); ctx.lineTo(p.x, p.y); ctx.stroke();
+    ctx.restore();
+
+    // corpo
+    const glow=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,8);
+    glow.addColorStop(0,p.colorA); glow.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.save(); ctx.globalAlpha=0.9; ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+    // piccola luce frontale
+    ctx.fillStyle=p.colorB; ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+function drawCrowns(){
+  ctx.fillStyle='#0f1115aa'; ctx.fillRect(0,0,W,22);
+  ctx.font='bold 14px system-ui'; ctx.textAlign='left'; ctx.fillStyle='#ffd966';
+  ctx.fillText('🔱 '+state.crowns.you, 10, 16);
+  ctx.textAlign='right'; ctx.fillText(state.crowns.enemy+' 🔱', W-10, 16);
+}
+
+/* ================== UI & Mana ================== */
 const cards=[
   {label:'Scout (3)',type:'scout',cost:3},
   {label:'Tank (4)', type:'tank', cost:4},
@@ -188,30 +402,36 @@ const cards=[
   {label:'Healer (3)',type:'healer',cost:3},
   {label:'Riavvia',  type:'restart',cost:0},
 ];
-const cardRects=[]; let helpBtn=null,helpClose=null;
+const cardRects=[]; let helpBtn=null, helpClose=null;
 
 function drawManaBar(){
-  // contenitore
   const x=24,y=FIELD_H+16,w=W-48,h=14;
-  // colore dinamico
-  const m=state.manaP, M=state.manaMax;
+  const m=state.manaP,M=state.manaMax;
   let fill='#61dafb'; if(m<3) fill='#ff6b6b'; else if(m<7) fill='#ffd166';
-  // lampeggio a pieno
   if(m>=M-0.001){ const a=0.7+0.3*Math.sin(state.time*8); ctx.globalAlpha=a; }
-  ctx.fillStyle='#202a3a'; ctx.fillRect(x,y,w,h);
+  ctx.fillStyle='rgba(32,42,58,0.95)'; ctx.fillRect(x,y,w,h);
   ctx.fillStyle=fill; ctx.fillRect(x,y,w*(m/M),h);
   ctx.globalAlpha=1;
-  // tacche intere
   ctx.strokeStyle='#ffffff66'; ctx.lineWidth=1;
-  for(let i=1;i<M;i++){ const tx=x+w*(i/M); ctx.beginPath(); ctx.moveTo(tx, y); ctx.lineTo(tx, y+h); ctx.stroke(); }
-  // numeri
+  for(let i=1;i<M;i++){ const tx=x+w*(i/M); ctx.beginPath(); ctx.moveTo(tx,y); ctx.lineTo(tx,y+h); ctx.stroke(); }
   ctx.fillStyle='#cfe7ff'; ctx.font='bold 14px system-ui'; ctx.textAlign='right';
   ctx.fillText(`${Math.floor(m)} / ${M} 💧`, x+w, y-2+h+14);
 }
 
+function roundRect(x,y,w,h,r,fill,stroke){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y); ctx.closePath();
+  if(fill) ctx.fill(); if(stroke) ctx.stroke();
+}
+
 function drawUI(){
-  // pannello
-  ctx.fillStyle='#0f1115'; ctx.fillRect(0,FIELD_H,W,UI_H);
+  // pannello vetroso
+  ctx.fillStyle='rgba(10,12,16,0.86)'; ctx.fillRect(0,FIELD_H,W,UI_H);
+  ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect(0,FIELD_H, W, 1);
+
   // help
   helpBtn={x:W-44,y:FIELD_H+12,w:32,h:32};
   ctx.fillStyle='#1b2330'; ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2; roundRect(helpBtn.x,helpBtn.y,helpBtn.w,helpBtn.h,8,true,true);
@@ -220,7 +440,7 @@ function drawUI(){
   drawManaBar();
 
   // carte
-  cardRects.length=0; const gap=14,h=70,y=FIELD_H+44;
+  cardRects.length=0; const gap=14, h=70, y=FIELD_H+44;
   const w=(W-48-gap*(cards.length-1))/cards.length; let x=24;
   ctx.font='600 16px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
   for(const c of cards){
@@ -232,7 +452,7 @@ function drawUI(){
     cardRects.push({x,y,w,h,...c}); x+=w+gap;
   }
 
-  // overlay fine
+  // overlay fine partita
   if(!state.playing){
     ctx.fillStyle='#00000080'; ctx.fillRect(0,0,W,FIELD_H);
     ctx.fillStyle='#fff'; ctx.font='bold 38px system-ui'; ctx.textAlign='center';
@@ -249,59 +469,70 @@ function drawUI(){
     const lines=[
       '• Tocca il CAMPO per scegliere la corsia (A/B/C).',
       '• Gioca una carta: il numero è il COSTO in mana.',
-      '• Il tuo mana è la barra in basso (con numeri e tacche).',
-      '• L’IA usa un mana separato: il tuo non scende da solo.',
-      '• Healer (3) cura unità e torri alleate nella corsia.',
+      '• La barra in basso mostra QUANTO mana hai (con tacche).',
+      '• L’IA usa mana separato: il tuo non scende da solo.',
+      '• Spark spara proiettili, Healer lancia orbi di cura.',
       '• Vince chi fa più corone o abbatte entrambe le torri.',
       '• “Riavvia” ricomincia la partita.'
     ];
-    let y0=160; const lh=26,x0=60; for(const s of lines){ctx.fillText(s,x0,y0); y0+=lh;}
-    const bx=W/2-80,by=y0+20,bw=160,bh=48; ctx.fillStyle='#1b2330'; roundRect(bx,by,bw,bh,12,true,false);
+    let y0=160, lh=26, x0=60; for(const s of lines){ ctx.fillText(s,x0,y0); y0+=lh; }
+    const bx=W/2-80, by=y0+20, bw=160, bh=48;
+    ctx.fillStyle='#1b2330'; roundRect(bx,by,bw,bh,12,true,false);
     ctx.strokeStyle='#2c3c54'; ctx.lineWidth=2; roundRect(bx,by,bw,bh,12,false,true);
-    ctx.fillStyle='#eef'; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('Chiudi',bx+bw/2,by+bh/2);
+    ctx.fillStyle='#eef'; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('Chiudi', bx+bw/2, by+bh/2);
     helpClose={x:bx,y:by,w:bw,h:bh};
-  }else helpClose=null;
+  } else helpClose=null;
 }
 
-function roundRect(x,y,w,h,r,fill,stroke){
-  ctx.beginPath();
-  ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);
-  ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
-  ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);
-  ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath();
-  if(fill)ctx.fill(); if(stroke)ctx.stroke();
-}
-
-/* ===== Loop ===== */
+/* ================== Loop ================== */
 function draw(){
   ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#0f1115'; ctx.fillRect(0,0,canvas.width,canvas.height);
   ctx.setTransform(scale,0,0,scale,offX,offY);
+
   bg(); drawCrowns();
   state.playerTowers.forEach(t=>tower(t,true));
   state.enemyTowers.forEach(t=>tower(t,false));
   for(const u of state.units) drawUnit(u);
-  for(const f of state.floats){const a=1-f.t/.9;ctx.globalAlpha=a;ctx.fillStyle=f.c;ctx.font='bold 18px system-ui';ctx.textAlign='center';ctx.fillText(f.v,f.x,f.y);ctx.globalAlpha=1;}
-  for(const p of state.particles){const a=1-p.t/p.life;ctx.globalAlpha=a;ctx.fillStyle=p.c;ctx.fillRect(p.x-2,p.y-2,4,4);ctx.globalAlpha=1;}
+  drawProjectiles();
+  for(const f of state.floats){ const a=1-f.t/.9; ctx.globalAlpha=a; ctx.fillStyle=f.c; ctx.font='bold 18px system-ui'; ctx.textAlign='center'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
+  for(const p of state.particles){ const a=1-p.t/p.life; ctx.globalAlpha=a; ctx.fillStyle=p.c; ctx.fillRect(p.x-2,p.y-2,4,4); ctx.globalAlpha=1; }
+
   drawUI();
 }
-function loop(ts){const dt=Math.min(0.033,(ts-last)/1000);last=ts;step(dt);if(notEnoughManaBlink>0)notEnoughManaBlink-=dt;draw();requestAnimationFrame(loop);} requestAnimationFrame(loop);
+function loop(ts){
+  const dt=Math.min(0.033,(ts-last)/1000); last=ts;
+  step(dt); if(notEnoughManaBlink>0) notEnoughManaBlink-=dt;
+  draw(); requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
 
-/* ===== Input ===== */
+/* ================== Input ================== */
 canvas.addEventListener('pointerdown',(e)=>{
   e.preventDefault();
   const {x,y}=toLogical(e);
-  if(y<FIELD_H && !showHelp){ let k=0,b=1e9; for(let i=0;i<COL_X.length;i++){const d=Math.abs(x-COL_X[i]);if(d<b){b=d;k=i;}} selectedCol=k; return; }
+  // Selezione corsia
+  if(y<FIELD_H && !showHelp){
+    let k=0,b=1e9; for(let i=0;i<COL_X.length;i++){ const d=Math.abs(x-COL_X[i]); if(d<b){b=d;k=i;} }
+    selectedCol=k; return;
+  }
+  // Help
   if(helpBtn && x>=helpBtn.x && x<=helpBtn.x+helpBtn.w && y>=helpBtn.y && y<=helpBtn.y+helpBtn.h){ showHelp=!showHelp; return; }
   if(showHelp && helpClose && x>=helpClose.x && x<=helpClose.x+helpClose.w && y>=helpClose.y && y<=helpClose.y+helpClose.h){ showHelp=false; return; }
+
+  // Carte
   for(const r of cardRects){
     if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
       if(r.type==='restart'){
-        Object.assign(state,{playing:true,time:0}); state.match.t=0; state.crowns.you=state.crowns.enemy=0;
-        state.manaP=5; state.manaE=5; state.units.length=0;
-        state.playerTowers.forEach(t=>t.hp=t.max); state.enemyTowers.forEach(t=>t.hp=t.max); return;
+        Object.assign(state,{playing:true,time:0});
+        state.match.t=0; state.crowns.you=state.crowns.enemy=0;
+        state.manaP=5; state.manaE=5; state.units.length=0; state.projectiles.length=0;
+        state.playerTowers.forEach(t=>t.hp=t.max); state.enemyTowers.forEach(t=>t.hp=t.max);
+        return;
       }
       if(state.playing && state.manaP>=r.cost){
-        addUnit('P',selectedCol??1,r.type); state.manaP=Math.max(0,state.manaP-r.cost);
+        addUnit('P', selectedCol??1, r.type);
+        state.manaP=Math.max(0, state.manaP-r.cost);
       } else { notEnoughManaBlink=.25; }
       return;
     }
