@@ -1,1245 +1,674 @@
-
 <!doctype html>
 <html lang="it">
 <head>
-  <meta charset="utf-8">
-  <title>Arena Duel – Chibi Edition</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <link rel="manifest" href="manifest.json">
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      background: #05070a;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color: #f5f5f5;
-      touch-action: none;
-      -webkit-user-select: none;
-      user-select: none;
-    }
-    #gameCanvas {
-      position: fixed;
-      inset: 0;
-      width: 100vw;
-      height: 100vh;
-      display: block;
-      background: #05070a;
-    }
-    #installHint {
-      position: fixed;
-      left: 50%;
-      bottom: 16px;
-      transform: translateX(-50%);
-      background: rgba(15,15,20,.95);
-      color: #f5f5f5;
-      padding: 6px 12px;
-      border-radius: 999px;
-      font-size: 12px;
-      border: 1px solid #3b82f6;
-      box-shadow: 0 4px 14px rgba(0,0,0,.4);
-      z-index: 5;
-      display: none;
-    }
-  </style>
+<meta charset="utf-8">
+<title>Arena Duel – Proto v1</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b1020">
+<style>
+  html,body{
+    margin:0;
+    padding:0;
+    height:100%;
+    background:#05070b;
+    color:#fff;
+    font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-user-select:none;
+    user-select:none;
+    overscroll-behavior:none;
+  }
+  #game{
+    position:fixed;
+    inset:0;
+    width:100vw;
+    height:100vh;
+    display:block;
+    background:#05070b;
+    touch-action:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .hint{
+    position:fixed;
+    left:50%;
+    bottom:10px;
+    transform:translateX(-50%);
+    padding:6px 12px;
+    border-radius:999px;
+    background:rgba(0,0,0,.8);
+    border:1px solid rgba(90,120,255,.5);
+    font-size:12px;
+  }
+</style>
 </head>
 <body>
-<canvas id="gameCanvas"></canvas>
-<div id="installHint">Suggerimento: aggiungi l'app alla schermata Home per giocare come un'app.</div>
+<canvas id="game"></canvas>
+<div class="hint">Suggerimento: aggiungi il gioco alla Home per usarlo come app.</div>
 <script>
-// ==================== Canvas & resize ====================
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d", { alpha:false });
-const LOGICAL_W = 720;
-const LOGICAL_H = 1280;
+// ----- costanti logiche -----
+const W = 720;
+const H = 1280;
+const UI_H = 180;
+const FIELD_H = H - UI_H;
+const LANES_X = [W*0.2, W*0.5, W*0.8];
+
+// canvas
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d', {alpha:false});
 let scale=1, offX=0, offY=0;
 
 function resize(){
-  const rect = canvas.getBoundingClientRect();
-  const dpr  = window.devicePixelRatio || 1;
-  canvas.width  = Math.max(1, Math.round(rect.width * dpr));
-  canvas.height = Math.max(1, Math.round(rect.height * dpr));
-  scale = Math.min(canvas.width/LOGICAL_W, canvas.height/LOGICAL_H);
-  offX  = Math.floor((canvas.width - LOGICAL_W*scale)/2);
-  offY  = Math.floor((canvas.height- LOGICAL_H*scale)/2);
+  const r = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = Math.max(1, Math.round(r.width*dpr));
+  canvas.height = Math.max(1, Math.round(r.height*dpr));
+  scale = Math.min(canvas.width/W, canvas.height/H);
+  offX  = Math.floor((canvas.width  - W*scale)/2);
+  offY  = Math.floor((canvas.height - H*scale)/2);
 }
-addEventListener("resize", resize);
-addEventListener("orientationchange", resize);
+window.addEventListener('resize',resize);
+window.addEventListener('orientationchange',resize);
 resize();
 
-function toLogical(ev){
-  const rect = canvas.getBoundingClientRect();
-  const dpr  = window.devicePixelRatio || 1;
-  const x = (ev.clientX - rect.left) * dpr;
-  const y = (ev.clientY - rect.top ) * dpr;
-  return {
-    x: (x - offX)/scale,
-    y: (y - offY)/scale
-  };
+function toLogical(clientX,clientY){
+  const r = canvas.getBoundingClientRect();
+  const px = (clientX-r.left) * (canvas.width/r.width);
+  const py = (clientY-r.top ) * (canvas.height/r.height);
+  return {x:(px-offX)/scale, y:(py-offY)/scale};
+}
+function clamp(v,a,b){return v<a?a:(v>b?b:v);}
+
+// stato
+let selectedLane = 1;
+const state = {
+  running:true,
+  time:0,
+  manaP:5,
+  manaE:5,
+  manaMax:10,
+  manaRegen:0.02,
+  towersP:[],
+  towersE:[],
+  units:[],
+  bullets:[],
+  crystal:null,
+  result:null,
+  wins:0
+};
+
+function makeTower(x,y,team){
+  return {x,y,team,hp:120,maxHp:120};
 }
 
-// ==================== Random helpers ====================
-const rand = (a,b)=>a+Math.random()*(b-a);
-const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
-
-// ==================== Progress (localStorage) ====================
-const STORAGE_KEY = "arena_chibi_progress_v1";
-
-function loadProgress(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return { wins:0, levels:{} };
-    const obj = JSON.parse(raw);
-    if(typeof obj.wins !== "number" || !obj.levels) return { wins:0, levels:{} };
-    return obj;
-  }catch(e){ return { wins:0, levels:{} }; }
+function resetGame(){
+  state.running=true;
+  state.time=0;
+  state.manaP=5;
+  state.manaE=5;
+  state.manaMax=10;
+  state.towersP=[
+    makeTower(W*0.25, FIELD_H-80, 'P'),
+    makeTower(W*0.75, FIELD_H-80, 'P')
+  ];
+  state.towersE=[
+    makeTower(W*0.25, 80, 'E'),
+    makeTower(W*0.75, 80, 'E')
+  ];
+  state.units=[];
+  state.bullets=[];
+  state.crystal={x:W*0.5, y:FIELD_H/2, hp:80, maxHp:80, alive:true};
+  state.result=null;
 }
-function saveProgress(){
-  try{
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
-  }catch(e){}
-}
+resetGame();
 
-let progress = loadProgress();
-
-// ==================== Card definitions ====================
-const CARD_DEFS = [
-  { id:"scout",   name:"Scout",    cost:3, unlockWins:0, role:"melee",
-    base:{hp:36, dmg:7, spd:95, range:40, rate:0.6} },
-  { id:"spark",   name:"Spark",    cost:2, unlockWins:0, role:"ranged",
-    base:{hp:26, dmg:8, spd:80, range:140, rate:0.9} },
-  { id:"tank",    name:"Tank",     cost:4, unlockWins:1, role:"melee",
-    base:{hp:90, dmg:10, spd:60, range:42, rate:0.9} },
-  { id:"healer",  name:"Healer",   cost:3, unlockWins:2, role:"healer",
-    base:{hp:34, dmg:-7, spd:80, range:120, rate:0.9} },
-  { id:"squad",   name:"Squadra",  cost:4, unlockWins:3, role:"squad",
-    base:{hp:70, dmg:6, spd:90, range:40, rate:0.7} },
-  { id:"guardian",name:"Guardiano",cost:5, unlockWins:5, role:"melee",
-    base:{hp:140, dmg:16, spd:55, range:48, rate:0.8} },
+// carte
+const cards=[
+  {key:'scout', name:'Scout', cost:3},
+  {key:'spark', name:'Spark', cost:2},
+  {key:'tank',  name:'Tank',  cost:4},
+  {key:'healer',name:'Healer',cost:3},
+  {key:'restart',name:'Riavvia',cost:0}
 ];
+let cardRects=[];
+let notEnoughMana=0;
 
-function cardLevel(id){
-  const baseLevel = (progress.wins >= getCard(id).unlockWins) ? 1 : 0;
-  return Math.max(baseLevel, progress.levels[id] || 0);
-}
-function getCard(id){ return CARD_DEFS.find(c=>c.id===id); }
-
-// All cards unlocked? for debug
-// progress.wins = 10;
-
-// ==================== Game state ====================
-const FIELD_H = 1020; // spazio per campo, il resto UI
-const UI_H     = LOGICAL_H - FIELD_H;
-const COL_X = [LOGICAL_W*0.2, LOGICAL_W*0.5, LOGICAL_W*0.8];
-const RIVER_Y = FIELD_H*0.5;
-
-let screen = "deck";  // "deck" | "battle"
-let selectedDeck = []; // array di card.id (max 4)
-
-// Battaglia
-let state = null; // verra' creato da resetBattle()
-let lastTime = performance.now();
-let laneSelected = 1;
-let uiCardRects = [];
-let crystal = null;
-
-// ==================== Reset & setup ====================
-function makeUnit(team, col, cardId){
-  const card = getCard(cardId);
-  const lvl  = cardLevel(cardId);
-  const mult = 1 + 0.18*(lvl-1);  // bonus per livello
-  const base = card.base;
-  const isPlayer = team==="P";
-  const x = COL_X[col];
-  const y = isPlayer ? (FIELD_H-80) : 80;
-  const dir = isPlayer ? -1 : 1;
-  return {
-    kind:"unit",
-    team,
-    col,
-    cardId,
-    lvl,
-    x,y, dir,
-    role:card.role,
-    hp: base.hp * mult,
-    maxhp: base.hp * mult,
-    dmg: base.dmg * mult,
-    spd: base.spd * mult,
-    range: base.range,
-    rate: base.rate,
-    cd: 0
-  };
-}
-
-function resetBattle(){
-  screen = "battle";
-  laneSelected = 1;
-  const playerTowers = [
-    { kind:"tower", team:"P", x:COL_X[0], y:FIELD_H-120, hp:150, maxhp:150, cd:0, range:180 },
-    { kind:"tower", team:"P", x:COL_X[2], y:FIELD_H-120, hp:150, maxhp:150, cd:0, range:180 }
-  ];
-  const enemyTowers = [
-    { kind:"tower", team:"E", x:COL_X[0], y:120, hp:150, maxhp:150, cd:0, range:180 },
-    { kind:"tower", team:"E", x:COL_X[2], y:120, hp:150, maxhp:150, cd:0, range:180 }
-  ];
-  crystal = {
-    kind:"crystal",
-    team:"N",
-    x:COL_X[1], y:RIVER_Y,
-    hp:80, maxhp:80,
-    dead:false
-  };
-  state = {
-    time:0,
-    manaP:8,
-    manaE:8,
-    manaMax:13,
-    manaRegen:0.015,
-    units:[],
-    projectiles:[],
-    floats:[],
-    particles:[],
-    playerTowers,
-    enemyTowers,
-    crowns:{you:0, enemy:0},
-    playing:true,
-    matchTime:0,
-    matchLen:120,
-    winner:null
-  };
-}
-
-resetBattle(); // avremo subito qualcosa se entriamo in battle per debug
-
-// ==================== Floats & particles ====================
-function addFloat(x,y,text,color){
-  state.floats.push({x,y,text,color,t:0});
-}
-function addHit(x,y,color){
-  for(let i=0;i<8;i++){
-    state.particles.push({
-      x,y,
-      vx: rand(-1,1),
-      vy: rand(-1.5,-0.3),
-      life: rand(.35,.7),
-      t:0,
-      color
-    });
-  }
-}
-
-// ==================== Audio SFX (tiny) ====================
-let AC = null;
-function sfx(kind){
+// audio minimale
+let ac=null;
+function beep(type){
   try{
-    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
-    const o = AC.createOscillator();
-    const g = AC.createGain();
-    const map = {
-      place: [520, .06, "square"],
-      hit:   [260, .08, "square"],
-      heal:  [640, .09, "sine"],
-      win:   [880, .3, "triangle"],
-      lose:  [180, .3, "triangle"],
-      mana:  [720, .12, "triangle"],
-      crystal:[540,.12,"sawtooth"]
-    };
-    const [f,t,w] = map[kind] || [440,.08,"square"];
-    o.type = w; o.frequency.value=f;
-    g.gain.value=0.06;
-    o.connect(g); g.connect(AC.destination);
-    o.start();
-    g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime+t);
-    o.stop(AC.currentTime+t);
+    ac = ac || new (window.AudioContext||window.webkitAudioContext)();
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    let f=440,d=0.08;
+    if(type==='place'){f=660;d=0.06;}
+    if(type==='hit'){f=220;d=0.04;}
+    if(type==='win'){f=880;d=0.25;}
+    if(type==='lose'){f=160;d=0.25;}
+    o.type='square';
+    o.frequency.value=f;
+    g.gain.value=0.05;
+    o.connect(g); g.connect(ac.destination);
+    const t=ac.currentTime;
+    o.start(t);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+d);
+    o.stop(t+d);
   }catch(e){}
 }
 
-// ==================== Damage & healing ====================
-function applyDamage(target, amount, fromTeam){
-  if(!target || !target.hp) return;
-  target.hp -= amount;
-  const isHeal = amount<0;
-  const col = isHeal ? "#8ff08f" : "#ffb37a";
-  addFloat(target.x, target.y-26, (isHeal?"+":"-")+Math.round(Math.abs(amount)), col);
-  addHit(target.x, target.y-8, col);
-  if(isHeal){ sfx("heal"); }
-  else sfx("hit");
-
-  // Cristallo distrutto
-  if(target.kind==="crystal" && !target.dead && target.hp<=0){
-    target.dead=true;
-    // Bonus a chi ha colpito per ultimo
-    if(fromTeam==="P"){
-      state.manaP = clamp(state.manaP+4,0,state.manaMax);
-      for(const t of state.playerTowers){ t.hp = clamp(t.hp+12,0,t.maxhp); }
-    }else if(fromTeam==="E"){
-      state.manaE = clamp(state.manaE+4,0,state.manaMax);
-      for(const t of state.enemyTowers){ t.hp = clamp(t.hp+12,0,t.maxhp); }
-    }
-    addFloat(target.x, target.y-40, "+Mana", "#7fd7ff");
-    sfx("crystal");
-  }
+function makeUnit(team,lane,kind){
+  const x = LANES_X[lane];
+  const y = team==='P' ? FIELD_H-130 : 130;
+  const dir = team==='P' ? -1 : 1;
+  const u={team,lane,kind,x,y,dir,cd:0,hp:40,maxHp:40,atk:10,range:26,speed:60};
+  if(kind==='scout'){u.speed=90;u.hp=26;u.maxHp=26;u.atk=9;u.range=24;}
+  else if(kind==='tank'){u.speed=40;u.hp=80;u.maxHp=80;u.atk=12;u.range=26;}
+  else if(kind==='spark'){u.speed=55;u.hp=30;u.maxHp=30;u.atk=10;u.range=120;}
+  else if(kind==='healer'){u.speed=60;u.hp=30;u.maxHp=30;u.atk=-8;u.range=100;}
+  return u;
 }
 
-// ==================== Projectiles ====================
-function fireProjectile(from, target, opts){
-  if(!target) return;
-  const dx = target.x - from.x;
-  const dy = target.y - from.y;
-  const L  = Math.hypot(dx,dy) || 1;
-  const speed = opts.speed || 420;
-  const vx = dx/L * speed;
-  const vy = dy/L * speed;
-  state.projectiles.push({
-    x:from.x, y:from.y,
-    vx,vy,
-    team:opts.team,
-    heal:opts.heal || false,
-    dmg:opts.dmg || 8,
-    life:1.6,
-    colorA:opts.colorA || "#fffacd",
-    colorB:opts.colorB || "#7fb6ff"
-  });
+function spawnP(kind){
+  const card = cards.find(c=>c.key===kind);
+  if(!card) return;
+  if(kind==='restart'){ resetGame(); return; }
+  if(state.manaP < card.cost){ notEnoughMana=0.6; return; }
+  state.manaP -= card.cost;
+  state.units.push(makeUnit('P',selectedLane,kind));
+  beep('place');
+}
+function spawnE(kind){
+  state.units.push(makeUnit('E',Math.floor(Math.random()*3),kind));
 }
 
-// ==================== AI ====================
-let aiTimer=2.0;
-function updateAI(dt){
-  aiTimer -= dt;
-  if(aiTimer>0 || !state.playing) return;
-  aiTimer = rand(1.4,2.6);
-
-  const m = Math.floor(state.manaE);
-  const pool = [];
-  for(const card of CARD_DEFS){
-    if(progress.wins < card.unlockWins) continue;
-    if(card.cost <= m) pool.push(card);
-  }
+let aiTimer=2;
+function aiStep(dt){
+  if(!state.running) return;
+  aiTimer-=dt;
+  if(aiTimer>0) return;
+  aiTimer=1.5+Math.random()*1.5;
+  const mana=Math.floor(state.manaE);
+  const pool=[];
+  if(mana>=2) pool.push('spark');
+  if(mana>=3) pool.push('scout','healer');
+  if(mana>=4) pool.push('tank');
   if(!pool.length) return;
-  const card = pool[(Math.random()*pool.length)|0];
-  const col  = (Math.random()*3)|0;
-  spawnUnit("E", col, card.id);
-  state.manaE = Math.max(0, state.manaE-card.cost);
+  const kind=pool[Math.floor(Math.random()*pool.length)];
+  const cost=cards.find(c=>c.key===kind).cost;
+  state.manaE=Math.max(0,state.manaE-cost);
+  spawnE(kind);
 }
 
-function spawnUnit(team, col, cardId){
-  const u = makeUnit(team, col, cardId);
-  state.units.push(u);
-  sfx("place");
-}
-
-// ==================== Nearest target helper ====================
-function nearestTarget(unit){
-  const enemyTeam = unit.team === "P" ? "E" : "P";
-  const foes = state.units.filter(u=>u.team===enemyTeam && u.col===unit.col);
-  const towers = (enemyTeam==="E" ? state.enemyTowers : state.playerTowers);
-  let best=null, bestScore=1e9;
-
-  // crystal: solo se in colonna centrale
-  if(unit.col===1 && !crystal.dead){
-    const sc = Math.abs(crystal.y - unit.y)*0.8;
-    if(sc<bestScore){ bestScore=sc; best=crystal; }
+function update(dt){
+  state.time+=dt;
+  if(state.running){
+    state.manaP = clamp(state.manaP + state.manaRegen*dt*60, 0, state.manaMax);
+    state.manaE = clamp(state.manaE + state.manaRegen*dt*60, 0, state.manaMax);
+    aiStep(dt);
   }
+  notEnoughMana=Math.max(0,notEnoughMana-dt);
 
-  for(const f of foes){
-    const sc = Math.abs(f.y - unit.y)*0.9;
-    if(sc<bestScore){bestScore=sc; best=f;}
-  }
-  for(const t of towers){
-    const inLane = Math.abs(t.x - COL_X[unit.col]) < 140;
-    if(!inLane || t.hp<=0) continue;
-    const sc = Math.abs(t.y - unit.y);
-    if(sc<bestScore){bestScore=sc; best=t;}
-  }
-  const dist = best ? Math.hypot(best.x-unit.x, best.y-unit.y) : 9999;
-  return { target:best, dist };
-}
+  // units
+  for(const u of state.units){
+    if(!state.running) break;
+    u.cd-=dt;
+    const enemyTeam = u.team==='P'?'E':'P';
+    const foes  = state.units.filter(v=>v.team===enemyTeam && v.lane===u.lane);
+    const towers = (enemyTeam==='E'?state.towersE:state.towersP);
 
-// ==================== Update battle ====================
-function updateBattle(dt){
-  const s = state;
-  if(!s) return;
-
-  s.time += dt;
-  if(s.playing){
-    s.matchTime += dt;
-    if(s.matchTime >= s.matchLen){
-      s.playing = false;
-      s.winner = (s.crowns.you > s.crowns.enemy) ? "P" :
-                 (s.crowns.enemy > s.crowns.you) ? "E" : "draw";
-      sfx(s.winner==="P" ? "win" : "lose");
-      if(s.winner==="P"){
-        progress.wins++;
-        // random card upgrade tra quelle sbloccate
-        const unlocked = CARD_DEFS.filter(c=>progress.wins>=c.unlockWins);
-        if(unlocked.length){
-          const c = unlocked[(Math.random()*unlocked.length)|0];
-          const cur = cardLevel(c.id);
-          if(cur<3){
-            progress.levels[c.id] = cur+1;
-          }
+    if(u.kind==='healer'){
+      let best=null,bestGap=0;
+      const allies=state.units.filter(v=>v.team===u.team && v.lane===u.lane);
+      for(const a of allies){
+        const gap=a.maxHp-a.hp;
+        const d=Math.hypot(a.x-u.x,a.y-u.y);
+        if(gap>bestGap && d<=u.range){bestGap=gap;best=a;}
+      }
+      if(!best){
+        const allyT = (u.team==='P'?state.towersP:state.towersE);
+        for(const t of allyT){
+          const gap=t.maxHp-t.hp;
+          const d=Math.hypot(t.x-u.x,t.y-u.y);
+          if(gap>bestGap && d<=u.range){bestGap=gap;best=t;}
         }
-        saveProgress();
-      }
-    }
-    s.manaP = clamp(s.manaP + s.manaRegen*60*dt, 0, s.manaMax);
-    s.manaE = clamp(s.manaE + s.manaRegen*60*dt, 0, s.manaMax);
-  }
-
-  updateAI(dt);
-
-  // Units
-  for(const u of s.units){
-    u.cd -= dt;
-    const {target, dist} = nearestTarget(u);
-    if(u.role==="healer"){
-      // Healer cura alleati / torri alleate
-      let best=null, bestGap=0;
-      for(const a of s.units){
-        if(a.team!==u.team || a.col!==u.col) continue;
-        const gap = a.maxhp - a.hp;
-        const d   = Math.hypot(a.x-u.x,a.y-u.y);
-        if(gap>bestGap && d<=u.range){ bestGap=gap; best=a; }
-      }
-      const towers = (u.team==="P"?s.playerTowers:s.enemyTowers);
-      for(const t of towers){
-        const inLane = Math.abs(t.x - COL_X[u.col])<150;
-        if(!inLane) continue;
-        const gap = t.maxhp - t.hp;
-        const d = Math.hypot(t.x-u.x,t.y-u.y);
-        if(gap>bestGap && d<=u.range){bestGap=gap; best=t;}
       }
       if(best && u.cd<=0){
-        u.cd = u.rate;
-        fireProjectile(u,best,{
-          team:u.team,
-          heal:true,
-          dmg:Math.abs(u.dmg),
-          speed:360,
-          colorA:"#b9ffcf",
-          colorB:"#5be28a"
-        });
+        u.cd=0.9;
+        best.hp = clamp(best.hp + Math.abs(u.atk),0,best.maxHp);
       }else{
-        u.y += u.dir * u.spd * dt;
+        u.y += u.dir*u.speed*dt;
       }
-    }else if(u.role==="ranged"){
-      if(target && dist<=u.range){
-        if(u.cd<=0){
-          u.cd=u.rate;
-          fireProjectile(u,target,{
-            team:u.team,
-            heal:false,
-            dmg:u.dmg,
-            speed:480,
-            colorA:"#fffacd",
-            colorB:(u.team==="P")?"#7fb6ff":"#ff9b9b"
-          });
+    }else if(u.kind==='spark'){
+      let target=null, bestDist=1e9;
+      for(const f of foes){
+        const d=Math.hypot(f.x-u.x,f.y-u.y);
+        if(d<u.range && d<bestDist){bestDist=d;target=f;}
+      }
+      if(!target){
+        for(const t of towers){
+          const d=Math.hypot(t.x-u.x,t.y-u.y);
+          if(d<u.range && d<bestDist){bestDist=d;target=t;}
         }
+      }
+      if(state.crystal && state.crystal.alive && !target){
+        const c=state.crystal;
+        const d=Math.hypot(c.x-u.x,c.y-u.y);
+        if(d<u.range) target=c;
+      }
+      if(target && u.cd<=0){
+        u.cd=0.9;
+        state.bullets.push({x:u.x,y:u.y,tx:target.x,ty:target.y,team:u.team,speed:260,dmg:Math.abs(u.atk)});
       }else{
-        u.y += u.dir * u.spd * dt;
+        u.y += u.dir*u.speed*dt;
       }
     }else{
-      // melee & squad
-      if(target && dist<=u.range){
-        if(u.cd<=0){
-          u.cd = u.rate;
-          applyDamage(target, u.dmg, u.team);
+      // melee
+      let target=null,bestDist=1e9;
+      for(const f of foes){
+        const d=Math.hypot(f.x-u.x,f.y-u.y);
+        if(d<26 && d<bestDist){bestDist=d;target=f;}
+      }
+      if(!target){
+        for(const t of towers){
+          const d=Math.hypot(t.x-u.x,t.y-u.y);
+          if(d<30 && d<bestDist){bestDist=d;target=t;}
+        }
+      }
+      if(state.crystal && state.crystal.alive && !target){
+        const c=state.crystal;
+        const d=Math.hypot(c.x-u.x,c.y-u.y);
+        if(d<30) target=c;
+      }
+      if(target && u.cd<=0){
+        u.cd=0.6;
+        target.hp -= u.atk;
+        beep('hit');
+        if(target===state.crystal && target.hp<=0 && target.alive){
+          target.alive=false;
+          state.manaMax+=4;
+          state.manaP=Math.min(state.manaMax,state.manaP+5);
         }
       }else{
-        u.y += u.dir * u.spd * dt;
+        u.y += u.dir*u.speed*dt;
       }
     }
   }
+  state.units = state.units.filter(u=>u.hp>0 && u.y>-40 && u.y<FIELD_H+40);
 
-  // Projectiles
-  for(const p of s.projectiles){
-    p.life -= dt;
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-    if(p.life<=0) continue;
-    // collision
-    const enemyTeam = p.heal ? p.team : (p.team==="P"?"E":"P");
-    const poolUnits = s.units.filter(u=> (p.heal ? u.team===p.team : u.team===enemyTeam));
-    let hit=null;
-    for(const u of poolUnits){
-      const d = Math.hypot(u.x-p.x,u.y-p.y);
-      if(d<16){hit=u;break;}
-    }
-    if(!hit){
-      const poolTowers = p.heal ? (p.team==="P"?s.playerTowers:s.enemyTowers)
-                                : (p.team==="P"?s.enemyTowers:s.playerTowers);
-      for(const t of poolTowers){
-        const d = Math.hypot(t.x-p.x,t.y-p.y);
-        if(d<26){hit=t;break;}
+  // bullets
+  for(const b of state.bullets){
+    const dx=b.tx-b.x, dy=b.ty-b.y;
+    const d=Math.hypot(dx,dy)||1;
+    const step=b.speed*dt;
+    if(step>=d){
+      const enemyTeam=b.team==='P'?'E':'P';
+      let hit=null;
+      for(const u of state.units){
+        if(u.team!==enemyTeam) continue;
+        const du=Math.hypot(u.x-b.tx,u.y-b.ty);
+        if(du<20){hit=u;break;}
       }
-    }
-    if(!hit && !p.heal && !crystal.dead){
-      const d = Math.hypot(crystal.x-p.x, crystal.y-p.y);
-      if(d<26){
-        hit = crystal;
+      if(!hit){
+        const tws = enemyTeam==='E'?state.towersE:state.towersP;
+        for(const t of tws){
+          const dtw=Math.hypot(t.x-b.tx,t.y-b.ty);
+          if(dtw<24){hit=t;break;}
+        }
       }
-    }
-    if(hit){
-      if(p.heal) applyDamage(hit, -p.dmg, p.team);
-      else      applyDamage(hit,  p.dmg, p.team);
-      p.life=0;
+      if(!hit && state.crystal && state.crystal.alive){
+        const dc=Math.hypot(state.crystal.x-b.tx,state.crystal.y-b.ty);
+        if(dc<24) hit=state.crystal;
+      }
+      if(hit){
+        hit.hp -= b.dmg;
+        beep('hit');
+        if(hit===state.crystal && hit.hp<=0 && hit.alive){
+          hit.alive=false;
+          state.manaMax+=4;
+          state.manaP=Math.min(state.manaMax,state.manaP+5);
+        }
+      }
+      b._dead=true;
+    }else{
+      b.x += dx/d*step;
+      b.y += dy/d*step;
     }
   }
-  s.projectiles = s.projectiles.filter(p=>p.life>0 && p.x>-40 && p.x<LOGICAL_W+40 && p.y>-40 && p.y<FIELD_H+40);
+  state.bullets = state.bullets.filter(b=>!b._dead);
 
-  // Cleanup & crowns
-  s.units = s.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
-  for(const f of s.floats){ f.t+=dt; f.y -= 40*dt; }
-  s.floats = s.floats.filter(f=>f.t<1.0);
-  for(const p of s.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=0.04; }
-  s.particles = s.particles.filter(p=>p.t<p.life);
-
-  const pAlive = s.playerTowers.filter(t=>t.hp>0).length;
-  const eAlive = s.enemyTowers.filter(t=>t.hp>0).length;
-  s.crowns.you   = 2 - eAlive;
-  s.crowns.enemy = 2 - pAlive;
-  if(s.playing && (pAlive===0 || eAlive===0)){
-    s.playing=false;
-    s.winner = (eAlive===0) ? "P" : "E";
-    sfx(s.winner==="P" ? "win":"lose");
-    if(s.winner==="P"){
-      progress.wins++;
-      const unlocked = CARD_DEFS.filter(c=>progress.wins>=c.unlockWins);
-      if(unlocked.length){
-        const c = unlocked[(Math.random()*unlocked.length)|0];
-        const cur = cardLevel(c.id);
-        if(cur<3) progress.levels[c.id]=cur+1;
-      }
-      saveProgress();
-    }
+  // vittoria / sconfitta
+  function alive(arr){return arr.filter(t=>t.hp>0).length;}
+  const pAlive=alive(state.towersP);
+  const eAlive=alive(state.towersE);
+  if(state.running && (pAlive===0 || eAlive===0)){
+    state.running=false;
+    if(eAlive===0 && pAlive>0){state.result='win';state.wins++;beep('win');}
+    else if(pAlive===0 && eAlive>0){state.result='lose';beep('lose');}
+    else state.result='draw';
   }
 }
 
-// ==================== Rendering helpers ====================
-function softShadow(x,y,rx,ry,a){
-  ctx.save();
-  ctx.globalAlpha = a||0.24;
-  ctx.fillStyle = "#000";
+function bg(){
+  const g=ctx.createLinearGradient(0,0,0,FIELD_H);
+  g.addColorStop(0,'#dfecc2');
+  g.addColorStop(1,'#c3dc8e');
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,W,FIELD_H);
+
+  ctx.fillStyle='rgba(0,0,0,0.03)';
+  for(let x=0;x<W;x+=80){
+    ctx.fillRect(x,0,1,FIELD_H);
+  }
+  for(let y=0;y<FIELD_H;y+=80){
+    ctx.fillRect(0,y,W,1);
+  }
+
+  const riverY=FIELD_H/2;
+  ctx.fillStyle='#c9a071';
+  ctx.fillRect(0,riverY-32,W,12);
+  ctx.fillRect(0,riverY+20,W,12);
+  const wGrad=ctx.createLinearGradient(0,riverY-20,0,riverY+20);
+  wGrad.addColorStop(0,'#b9ecff');
+  wGrad.addColorStop(1,'#6bb9e9');
+  ctx.fillStyle=wGrad;
+  ctx.fillRect(0,riverY-20,W,40);
+
+  ctx.fillStyle='rgba(0,0,0,0.05)';
+  const laneX=LANES_X[selectedLane];
+  ctx.fillRect(laneX-W*0.17,0,W*0.34,FIELD_H);
+}
+
+function hpBar(x,y,w,h,ratio){
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.fillRect(x,y,w,h);
+  const g=ctx.createLinearGradient(x,0,x+w,0);
+  g.addColorStop(0,'#7af07a');
+  g.addColorStop(1,'#2ec14b');
+  ctx.fillStyle=g;
+  ctx.fillRect(x,y,w*ratio,h);
+}
+
+function drawTower(t){
+  const friendly=t.team==='P';
+  ctx.fillStyle='rgba(0,0,0,0.35)';
   ctx.beginPath();
-  ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);
+  ctx.ellipse(t.x,t.y+10,20,8,0,0,Math.PI*2);
   ctx.fill();
-  ctx.restore();
-}
 
-// Textures basic
-let grassPattern = null;
-let dirtPattern  = null;
+  const body=ctx.createLinearGradient(t.x-20,t.y-26,t.x+20,t.y+26);
+  body.addColorStop(0,'#f5f7fb');
+  body.addColorStop(1,'#b5c2d4');
+  ctx.fillStyle=body;
+  ctx.beginPath();
+  ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='#7b889b';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2);
+  ctx.stroke();
 
-function buildTextures(){
-  const c = document.createElement("canvas");
-  c.width = c.height = 128;
-  let g = c.getContext("2d");
-  // grass
-  const grad = g.createLinearGradient(0,0,0,128);
-  grad.addColorStop(0,"#e3f0c0");
-  grad.addColorStop(1,"#d1e09a");
-  g.fillStyle = grad;
-  g.fillRect(0,0,128,128);
-  for(let i=0;i<500;i++){
-    g.fillStyle = `rgba(70,110,40,${0.12+Math.random()*0.12})`;
-    g.fillRect(Math.random()*128,Math.random()*128,1,2);
-  }
-  grassPattern = ctx.createPattern(c,"repeat");
+  const head=ctx.createRadialGradient(t.x-4,t.y-4,2,t.x,t.y,14);
+  head.addColorStop(0,'#fff');
+  head.addColorStop(1,friendly?'#2d7fe8':'#e24c4c');
+  ctx.fillStyle=head;
+  ctx.beginPath();
+  ctx.arc(t.x,t.y,16,0,Math.PI*2);
+  ctx.fill();
 
-  // dirt
-  g.clearRect(0,0,128,128);
-  g.fillStyle="#cfae7a";
-  g.fillRect(0,0,128,128);
-  for(let i=0;i<400;i++){
-    g.fillStyle=`rgba(90,60,40,${0.08+Math.random()*0.07})`;
-    g.beginPath();
-    g.arc(Math.random()*128,Math.random()*128,Math.random()*1.8,0,Math.PI*2);
-    g.fill();
-  }
-  dirtPattern = ctx.createPattern(c,"repeat");
-}
-buildTextures();
-
-function drawBackground(){
-  ctx.fillStyle = grassPattern;
-  ctx.fillRect(0,0,LOGICAL_W,FIELD_H);
-
-  // River banks
-  ctx.fillStyle = dirtPattern;
-  ctx.fillRect(0,RIVER_Y-26,LOGICAL_W,10);
-  ctx.fillRect(0,RIVER_Y+16,LOGICAL_W,10);
-
-  // River
-  const h=28;
-  const grad = ctx.createLinearGradient(0,RIVER_Y-h/2,0,RIVER_Y+h/2);
-  grad.addColorStop(0,"#b8ecff");
-  grad.addColorStop(.5,"#80c7e8");
-  grad.addColorStop(1,"#5caed5");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0,RIVER_Y-h/2,LOGICAL_W,h);
-
-  // Light waves
-  ctx.save();
-  ctx.globalAlpha=0.25;
-  ctx.fillStyle="#ffffff";
-  const t = state ? state.time : 0;
-  for(let i=0;i<3;i++){
-    ctx.beginPath();
-    ctx.moveTo(0,RIVER_Y+Math.sin(t*1.6+i)*3);
-    for(let x=0;x<=LOGICAL_W;x+=16){
-      const y = RIVER_Y + Math.sin((x*0.022)+(t*1.6+i))*3;
-      ctx.lineTo(x,y);
-    }
-    ctx.lineTo(LOGICAL_W,RIVER_Y+h/2);
-    ctx.lineTo(0,RIVER_Y+h/2);
-    ctx.closePath();
-    ctx.fill();
-  }
-  ctx.restore();
-
-  // lanes
-  ctx.strokeStyle="#a9b48066";
-  ctx.lineWidth=2;
-  for(const x of COL_X){
-    ctx.beginPath();
-    ctx.moveTo(x,30);
-    ctx.lineTo(x,FIELD_H-30);
-    ctx.stroke();
-  }
-
-  // selection highlight
-  ctx.fillStyle="rgba(59,130,246,0.16)";
-  ctx.fillRect(COL_X[laneSelected]-LOGICAL_W*0.17,0,LOGICAL_W*0.34,FIELD_H);
-
-  // bridges
-  const bridge = (cx)=>{
-    softShadow(cx,RIVER_Y+16,70,14,0.32);
-    ctx.save();
-    ctx.translate(cx,RIVER_Y);
-    const g = ctx.createLinearGradient(0,-20,0,20);
-    g.addColorStop(0,"#f4c38d");
-    g.addColorStop(1,"#b3733a");
-    ctx.fillStyle=g;
-    ctx.fillRect(-72,-20,144,40);
-    ctx.strokeStyle="#6b3a1f";
-    ctx.lineWidth=3;
-    ctx.strokeRect(-72,-20,144,40);
-    ctx.strokeStyle="#8b4a22";
-    for(let i=-64;i<=64;i+=16){
-      ctx.beginPath();
-      ctx.moveTo(i,-20); ctx.lineTo(i,20); ctx.stroke();
-    }
-    ctx.restore();
-  };
-  bridge(LOGICAL_W*0.32);
-  bridge(LOGICAL_W*0.68);
+  hpBar(t.x-24,t.y-32,48,5,clamp(t.hp/t.maxHp,0,1));
 }
 
 function drawCrystal(){
-  if(!crystal || crystal.dead) return;
-  softShadow(crystal.x, crystal.y+18, 26,12,0.32);
-  ctx.save();
-  ctx.translate(crystal.x, crystal.y);
-  const g = ctx.createLinearGradient(0,-34,0,26);
-  g.addColorStop(0,"#e7fbff");
-  g.addColorStop(1,"#69c7ff");
-  ctx.fillStyle=g;
+  const c=state.crystal;
+  if(!c || !c.alive) return;
+  ctx.fillStyle='rgba(0,0,0,0.35)';
   ctx.beginPath();
-  ctx.moveTo(0,-34);
-  ctx.lineTo(22,0);
-  ctx.lineTo(0,26);
-  ctx.lineTo(-22,0);
-  ctx.closePath();
+  ctx.ellipse(c.x,c.y+20,20,8,0,0,Math.PI*2);
   ctx.fill();
-  ctx.strokeStyle="#2b4b7f";
-  ctx.lineWidth=2;
-  ctx.stroke();
-  ctx.restore();
-
-  // HP bar
-  const ratio = clamp(crystal.hp/crystal.maxhp,0,1);
-  const w = 80, h=6;
-  ctx.fillStyle="rgba(0,0,0,0.45)";
-  ctx.fillRect(crystal.x-w/2, crystal.y-46, w, h);
-  const grad = ctx.createLinearGradient(crystal.x-w/2,0,crystal.x+w/2,0);
-  grad.addColorStop(0,"#7fd7ff");
-  grad.addColorStop(1,"#2f9be8");
+  const grad=ctx.createLinearGradient(c.x-20,c.y-30,c.x+20,c.y+30);
+  grad.addColorStop(0,'#8ef5ff');
+  grad.addColorStop(0.5,'#5cc2ff');
+  grad.addColorStop(1,'#2b7fe6');
   ctx.fillStyle=grad;
-  ctx.fillRect(crystal.x-w/2, crystal.y-46, w*ratio, h);
-
-  ctx.font="10px system-ui";
-  ctx.fillStyle="#e7f5ff";
-  ctx.textAlign="center";
-  ctx.fillText("Cristallo del Mana", crystal.x, crystal.y-54);
-}
-
-function drawTower(t, friendly){
-  softShadow(t.x, t.y+16, 34,12,0.3);
-  // base cilindro
-  ctx.save();
-  ctx.translate(t.x,t.y);
-  // base
-  ctx.fillStyle="#c7d2de";
+  ctx.strokeStyle='#ffffffaa';
   ctx.beginPath();
-  ctx.ellipse(0,14,26,10,0,0,Math.PI*2);
-  ctx.fill();
-
-  const bodyGrad = ctx.createLinearGradient(0,-30,0,14);
-  bodyGrad.addColorStop(0,"#f3f6fb");
-  bodyGrad.addColorStop(.5,"#d3dde8");
-  bodyGrad.addColorStop(1,"#b5c1d1");
-  ctx.fillStyle=bodyGrad;
-  ctx.fillRect(-22,-30,44,44);
-  ctx.strokeStyle="#7b8798";
-  ctx.lineWidth=2;
-  ctx.strokeRect(-22,-30,44,44);
-
-  // "cappello"
-  ctx.fillStyle = friendly ? "#4b97ff" : "#f16060";
-  ctx.beginPath();
-  ctx.arc(0,-24,16,0,Math.PI*2);
-  ctx.fill();
-  ctx.strokeStyle="#243447";
-  ctx.lineWidth=2;
-  ctx.stroke();
-
-  // cannone
-  ctx.fillStyle="#2f3640";
-  ctx.fillRect(-4,-8,8,16);
-
-  // bandierina
-  ctx.fillStyle = friendly ? "#9ae6ff" : "#ffd18a";
-  ctx.beginPath();
-  ctx.moveTo(18,-24);
-  ctx.lineTo(34,-28);
-  ctx.lineTo(18,-32);
+  ctx.moveTo(c.x,c.y-30);
+  ctx.lineTo(c.x+20,c.y);
+  ctx.lineTo(c.x,c.y+30);
+  ctx.lineTo(c.x-20,c.y);
   ctx.closePath();
   ctx.fill();
-  ctx.restore();
-
-  // HP bar
-  const ratio = clamp(t.hp/t.maxhp,0,1);
-  const w=90,h=8;
-  ctx.fillStyle="rgba(0,0,0,0.5)";
-  ctx.fillRect(t.x-w/2, t.y-44, w, h);
-  const g = ctx.createLinearGradient(t.x-w/2,0,t.x+w/2,0);
-  g.addColorStop(0,"#84f089");
-  g.addColorStop(1,"#39c259");
-  ctx.fillStyle=g;
-  ctx.fillRect(t.x-w/2, t.y-44, w*ratio, h);
-
-  if(ratio<0.4){
-    ctx.save();
-    ctx.globalAlpha = 0.35;
-    ctx.fillStyle = "orange";
-    ctx.beginPath();
-    ctx.arc(t.x, t.y-24, 20,0,Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-  }
-  if(ratio<0.2){
-    ctx.save();
-    ctx.globalAlpha = 0.35;
-    ctx.fillStyle = "red";
-    ctx.beginPath();
-    ctx.arc(t.x, t.y-24, 24,0,Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-  }
+  ctx.stroke();
+  hpBar(c.x-30,c.y+34,60,5,clamp(c.hp/c.maxHp,0,1));
 }
 
-// Chibi unit drawing
 function drawUnit(u){
-  softShadow(u.x, u.y+14, 18,8,0.28);
-  ctx.save();
-  ctx.translate(u.x, u.y);
-  const friendly = u.team==="P";
-
-  // small wobble
-  const wobble = Math.sin(state.time*4 + u.x*0.02)*1.2;
-
-  // body colors
-  const teamColor = friendly ? "#4b97ff" : "#f16060";
-  const darker    = friendly ? "#1f5fb8" : "#ba3434";
-
-  if(u.role==="squad"){
-    // tre mini soldatini
-    const offsets=[-16,0,16];
-    offsets.forEach((ox,idx)=>{
-      ctx.save();
-      ctx.translate(ox,0);
-      drawChibi(coreColor(teamColor,idx), darker);
-      ctx.restore();
-    });
-  }else{
-    drawChibi(teamColor,darker,u);
-  }
-
-  ctx.restore();
-
-  // HP bar
-  const ratio = clamp(u.hp/u.maxhp,0,1);
-  ctx.fillStyle="rgba(0,0,0,0.5)";
-  ctx.fillRect(u.x-18, u.y-28, 36,6);
-  const g = ctx.createLinearGradient(u.x-18,0,u.x+18,0);
-  g.addColorStop(0,"#8ff08f");
-  g.addColorStop(1,"#54c76b");
-  ctx.fillStyle=g;
-  ctx.fillRect(u.x-18, u.y-28, 36*ratio,6);
-
-  // livello badge
-  ctx.font="10px system-ui";
-  ctx.textAlign="center";
-  ctx.fillStyle="#000000aa";
-  ctx.fillRect(u.x-10, u.y-39, 20,10);
-  ctx.fillStyle="#f6f6f6";
-  ctx.fillText("Lv"+u.lvl, u.x, u.y-31);
-}
-
-function coreColor(base, idx){
-  // leggera variazione per le 3 unità della squad
-  if(idx===0) return "#60b0ff";
-  if(idx===2) return "#3a80ff";
-  return base;
-}
-
-function drawChibi(bodyColor, darker,u){
-  // corpo
-  ctx.save();
-  const t = state.time;
-  const bob = Math.sin(t*5)*2;
-  ctx.translate(0,bob);
-  // fatina healer style
-  // feet
-  ctx.fillStyle=darker;
-  ctx.fillRect(-10,10,20,6);
-  // corpo
-  ctx.fillStyle=bodyColor;
-  ctx.fillRect(-10,-8,20,18);
-  // testa
-  const headGrad = ctx.createRadialGradient(0,-18,3,0,-18,16);
-  headGrad.addColorStop(0,"#ffe9d1");
-  headGrad.addColorStop(1,"#e0b899");
-  ctx.fillStyle=headGrad;
+  const friendly=u.team==='P';
+  ctx.fillStyle='rgba(0,0,0,0.35)';
   ctx.beginPath();
-  ctx.arc(0,-18,14,0,Math.PI*2);
+  ctx.ellipse(u.x,u.y+10,16,6,0,0,Math.PI*2);
   ctx.fill();
-  // occhi
-  ctx.fillStyle="#222";
-  ctx.beginPath(); ctx.arc(-4,-18,2,0,Math.PI*2); ctx.arc(4,-18,2,0,Math.PI*2); ctx.fill();
-  // bocca
-  ctx.strokeStyle="#b46363";
-  ctx.lineWidth=1.4;
-  ctx.beginPath(); ctx.arc(0,-13,4,0,Math.PI); ctx.stroke();
-  // elmo / cappello per tank / guardian / spark / healer
-  if(u){
-    if(u.role==="healer"){
-      ctx.fillStyle="#58d978";
-      ctx.fillRect(-8,-24,16,6);
-      ctx.fillStyle="#e7fdf0";
-      ctx.fillRect(-2,-27,4,10);
-      ctx.fillRect(-5,-24,10,4);
-    }else if(u.cardId==="tank" || u.cardId==="guardian"){
-      ctx.fillStyle="#8f9fb8";
-      ctx.beginPath();
-      ctx.arc(0,-20,16,-Math.PI,0);
-      ctx.fill();
-      ctx.fillStyle="#dfe7ff";
-      ctx.fillRect(-10,-24,20,5);
-    }else if(u.role==="ranged"){
-      ctx.fillStyle="#ffe36a";
-      ctx.beginPath();
-      ctx.moveTo(-14,-24); ctx.lineTo(0,-34); ctx.lineTo(14,-24); ctx.closePath(); ctx.fill();
-    }
+
+  const body=ctx.createLinearGradient(u.x-10,u.y,u.x+10,u.y+24);
+  if(u.kind==='tank'){body.addColorStop(0,friendly?'#8fb4ff':'#ff8f8f');body.addColorStop(1,friendly?'#375bb3':'#b33434');}
+  else if(u.kind==='scout'){body.addColorStop(0,friendly?'#9fe3ff':'#ffd39f');body.addColorStop(1,friendly?'#1d9fe0':'#e68a2e');}
+  else if(u.kind==='spark'){body.addColorStop(0,'#ffe6a3');body.addColorStop(1,friendly?'#f1b02d':'#e2682e');}
+  else{body.addColorStop(0,'#bff5c6');body.addColorStop(1,'#45b663');}
+  ctx.fillStyle=body;
+  ctx.strokeStyle='#333';
+  ctx.beginPath();
+  ctx.rect(u.x-12,u.y-4,24,24);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle='#f7d6b0';
+  ctx.beginPath();
+  ctx.arc(u.x,u.y-10,8,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='#c6956a';
+  ctx.stroke();
+
+  ctx.fillStyle='#000';
+  ctx.beginPath();
+  ctx.arc(u.x-3,u.y-11,1.2,0,Math.PI*2);
+  ctx.arc(u.x+3,u.y-11,1.2,0,Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(u.x,u.y-8,3,0,Math.PI);
+  ctx.stroke();
+
+  if(u.kind==='spark'){
+    ctx.fillStyle='rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.moveTo(u.x,u.y+4);
+    ctx.lineTo(u.x-4,u.y+10);
+    ctx.lineTo(u.x+4,u.y+10);
+    ctx.closePath();
+    ctx.fill();
+  }else if(u.kind==='healer'){
+    ctx.fillStyle='#fff';
+    ctx.fillRect(u.x-2,u.y+2,4,8);
+    ctx.fillRect(u.x-6,u.y+4,12,4);
+  }else if(u.kind==='tank'){
+    ctx.fillStyle='rgba(0,0,0,0.3)';
+    ctx.fillRect(u.x-12,u.y+6,24,6);
   }
-  ctx.restore();
+
+  hpBar(u.x-14,u.y-22,28,4,clamp(u.hp/u.maxHp,0,1));
 }
 
-function drawProjectiles(){
-  for(const p of state.projectiles){
-    ctx.save();
-    // trail
-    ctx.globalAlpha=0.35;
-    const tx = p.x - p.vx*0.02;
-    const ty = p.y - p.vy*0.02;
-    const grad = ctx.createLinearGradient(tx,ty,p.x,p.y);
-    grad.addColorStop(0,"rgba(255,255,255,0)");
-    grad.addColorStop(1,p.colorB);
-    ctx.strokeStyle=grad;
-    ctx.lineWidth=3;
+function drawBullets(){
+  for(const b of state.bullets){
+    const grad=ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,6);
+    grad.addColorStop(0,'#fff9c4');
+    grad.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle=grad;
     ctx.beginPath();
-    ctx.moveTo(tx,ty);
-    ctx.lineTo(p.x,p.y);
+    ctx.arc(b.x,b.y,6,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function drawHud(){
+  ctx.fillStyle='rgba(0,0,0,0.75)';
+  ctx.fillRect(0,0,W,24);
+  ctx.fillStyle='#ffd966';
+  ctx.font='12px system-ui';
+  ctx.textAlign='left';
+  ctx.fillText('👑 '+state.wins,8,16);
+  ctx.textAlign='center';
+  ctx.fillStyle='#e5f0ff';
+  ctx.fillText('In partita: tocca il campo per scegliere corsia, poi le carte.', W/2,16);
+}
+
+function drawUI(){
+  const y0=FIELD_H;
+  ctx.fillStyle='#05070b';
+  ctx.fillRect(0,y0,W,UI_H);
+
+  const mx=10,my=y0+8,mw=W-20,mh=12;
+  ctx.fillStyle='#222738';
+  ctx.fillRect(mx,my,mw,mh);
+  const r=clamp(state.manaP/state.manaMax,0,1);
+  const g=ctx.createLinearGradient(mx,0,mx+mw,0);
+  g.addColorStop(0,'#55d2ff');
+  g.addColorStop(1,'#1a7bff');
+  ctx.fillStyle=g;
+  ctx.fillRect(mx,my,mw*r,mh);
+  ctx.fillStyle='#aab7ff';
+  ctx.font='11px system-ui';
+  ctx.textAlign='left';
+  ctx.fillText('Mana: '+Math.floor(state.manaP)+' / '+state.manaMax, mx, my+mh+12);
+
+  const pad=6;
+  const cardW=(W-pad*6)/5;
+  const cardH=70;
+  cardRects=[];
+  for(let i=0;i<cards.length;i++){
+    const c=cards[i];
+    const x=pad + i*(cardW+pad);
+    const y=y0+30;
+    cardRects.push({x,y,w:cardW,h:cardH,index:i});
+    const playable = (c.key==='restart') || (state.manaP>=c.cost && state.running);
+    ctx.fillStyle = playable ? '#121826' : '#25293a';
+    ctx.strokeStyle = playable ? '#4e6bff' : '#44495f';
+    ctx.beginPath();
+    ctx.rect(x,y,cardW,cardH);
+    ctx.fill();
     ctx.stroke();
 
-    // core
-    ctx.globalAlpha=1;
-    const g = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,8);
-    g.addColorStop(0,p.colorA);
-    g.addColorStop(1,"rgba(255,255,255,0)");
-    ctx.fillStyle=g;
-    ctx.beginPath();
-    ctx.arc(p.x,p.y,6,0,Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-  }
-}
-
-function drawFloats(){
-  ctx.font="11px system-ui";
-  ctx.textAlign="center";
-  for(const f of state.floats){
-    const a = 1 - f.t;
-    ctx.fillStyle = `rgba(0,0,0,${0.6*a})`;
-    ctx.fillText(f.text, f.x+1, f.y+1);
-    ctx.fillStyle = f.color;
-    ctx.fillText(f.text, f.x, f.y);
-  }
-}
-
-function drawParticles(){
-  for(const p of state.particles){
-    const a = 1 - (p.t/p.life);
-    ctx.fillStyle = p.color.replace(")",","+a+")").replace("rgb","rgba");
-    ctx.fillRect(p.x,p.y,2,2);
-  }
-}
-
-function drawTopBar(){
-  // testo istruzioni & vittorie
-  const padding=8;
-  ctx.fillStyle="rgba(5,7,12,0.92)";
-  ctx.fillRect(0,0,LOGICAL_W,32);
-  ctx.font="13px system-ui";
-  ctx.textAlign="left";
-  ctx.fillStyle="#e5e7eb";
-  const msg = screen==="deck"
-    ? `Seleziona fino a 4 carte per il tuo mazzo. Vittorie: ${progress.wins}`
-    : `In partita: tocca il campo per scegliere corsia, poi le carte. Vittorie: ${progress.wins}`;
-  ctx.fillText(msg, padding, 21);
-
-  // corone
-  if(screen==="battle"){
-    ctx.textAlign="left";
-    ctx.fillStyle="#ffd86b";
-    ctx.fillText("👑 "+state.crowns.you, 8, 46);
-    ctx.textAlign="right";
-    ctx.fillText(state.crowns.enemy+" 👑", LOGICAL_W-8, 46);
-  }
-}
-
-function drawManaBar(){
-  const x=16, y=FIELD_H+10, w=LOGICAL_W-32, h=14;
-  const m = state.manaP, M=state.manaMax;
-  ctx.fillStyle="rgba(0,0,0,0.7)";
-  ctx.fillRect(x,y,w,h);
-  const grad = ctx.createLinearGradient(x,0,x+w,0);
-  grad.addColorStop(0,"#60a5fa");
-  grad.addColorStop(1,"#2563eb");
-  ctx.fillStyle=grad;
-  ctx.fillRect(x,y,w*(m/M),h);
-  ctx.font="11px system-ui";
-  ctx.fillStyle="#e5f0ff";
-  ctx.textAlign="left";
-  ctx.fillText("Mana: "+m.toFixed(1)+" / "+M, x+4, y-2);
-}
-
-// Deck screen rendering
-let deckCardRects = [];
-let playButtonRect = null;
-
-function drawDeckScreen(){
-  deckCardRects = [];
-  ctx.fillStyle="#05070a";
-  ctx.fillRect(0,0,LOGICAL_W,LOGICAL_H);
-
-  drawTopBar();
-
-  ctx.font="20px system-ui";
-  ctx.textAlign="center";
-  ctx.fillStyle="#f9fafb";
-  ctx.fillText("Arena Duel – Chibi Deck", LOGICAL_W/2, 70);
-
-  ctx.font="14px system-ui";
-  ctx.fillStyle="#9ca3af";
-  ctx.fillText("Tocca le carte per selezionarle. Mazzo massimo: 4 carte.", LOGICAL_W/2, 96);
-
-  const cols=3, cardW=180, cardH=120;
-  const startX = (LOGICAL_W - cols*cardW - (cols-1)*16)/2;
-  let x=startX, y=130;
-  for(const card of CARD_DEFS){
-    const locked = progress.wins < card.unlockWins;
-    const lvl = cardLevel(card.id);
-    const selected = selectedDeck.includes(card.id);
-
-    // card background
-    const r={x,y,w:cardW,h:cardH, id:card.id};
-    deckCardRects.push(r);
-
     ctx.save();
-    ctx.translate(x,y);
-    // panel
-    ctx.fillStyle="rgba(15,23,42,0.96)";
-    ctx.fillRect(0,0,cardW,cardH);
-    ctx.strokeStyle= selected ? "#60a5fa" : "#4b5563";
-    ctx.lineWidth = selected ? 3 : 1.5;
-    ctx.strokeRect(0,0,cardW,cardH);
-
-    // icon area
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(8,8,68,68);
-    ctx.clip();
-    ctx.translate(42,42);
-    const dummyUnit = { team:"P", role:card.role, cardId:card.id, lvl:lvl || 1};
-    drawChibi("#4b97ff","#1f5fb8", dummyUnit);
-    ctx.restore();
-
-    // nome
-    ctx.font="14px system-ui";
-    ctx.fillStyle="#e5e7eb";
-    ctx.textAlign="left";
-    ctx.fillText(card.name, 84, 26);
-
-    // costo
-    ctx.font="12px system-ui";
-    ctx.fillStyle="#93c5fd";
-    ctx.fillText("Costo: "+card.cost, 84, 46);
-
-    // livello / lock
-    if(locked){
-      ctx.fillStyle="#f97373";
-      ctx.fillText("🔒 Vittorie "+card.unlockWins, 84, 66);
+    ctx.translate(x+cardW/2,y+22);
+    if(c.key==='scout'){
+      ctx.fillStyle='#7ecbff';
+      ctx.beginPath();ctx.arc(0,0,7,0,Math.PI*2);ctx.fill();
+    }else if(c.key==='spark'){
+      ctx.fillStyle='#ffe58a';
+      ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(9,8);ctx.lineTo(-9,8);ctx.closePath();ctx.fill();
+    }else if(c.key==='tank'){
+      ctx.fillStyle='#ff9f88';
+      ctx.fillRect(-9,-6,18,12);
+    }else if(c.key==='healer'){
+      ctx.fillStyle='#7cf0a3';
+      ctx.fillRect(-2,-8,4,16);
+      ctx.fillRect(-8,-2,16,4);
     }else{
-      ctx.fillStyle="#bbf7d0";
-      ctx.fillText("Livello: "+(lvl||1), 84, 66);
+      ctx.strokeStyle='#b7c4ff';
+      ctx.beginPath();ctx.arc(0,0,8,Math.PI*0.2,Math.PI*1.8);ctx.stroke();
     }
-
-    // selezionata
-    if(selected){
-      ctx.fillStyle="#22c55e";
-      ctx.fillText("Nel mazzo", 84, 86);
-    }
-
     ctx.restore();
 
-    x += cardW+16;
-    if(x + cardW > LOGICAL_W){
-      x = startX;
-      y += cardH+18;
+    ctx.textAlign='center';
+    ctx.fillStyle='#e5e9ff';
+    ctx.font='11px system-ui';
+    ctx.fillText(c.name,x+cardW/2,y+cardH-16);
+    if(c.cost>0){
+      ctx.fillStyle='#8bb0ff';
+      ctx.font='10px system-ui';
+      ctx.fillText(c.cost,x+cardW/2,y+14);
     }
   }
 
-  // Play button
-  const bw=220,bh=46;
-  const bx = (LOGICAL_W-bw)/2;
-  const by = LOGICAL_H-90;
-  playButtonRect = {x:bx,y:by,w:bw,h:bh};
-  ctx.fillStyle = selectedDeck.length? "#22c55e" : "#4b5563";
-  ctx.fillRect(bx,by,bw,bh);
-  ctx.font="16px system-ui";
-  ctx.fillStyle="#0b1120";
-  ctx.textAlign="center";
-  ctx.fillText(selectedDeck.length? "Gioca ("+selectedDeck.length+"/4)" : "Seleziona almeno 1 carta", bx+bw/2, by+30);
-}
-
-// ==================== Card bar drawing (battle) ====================
-function drawCardBar(){
-  uiCardRects = [];
-  const cards = selectedDeck.map(id=>getCard(id));
-  const n = cards.length;
-  if(!n) return;
-  const totalW = LOGICAL_W - 16;
-  const cardW  = Math.min(150, (totalW - (n-1)*8)/n);
-  const baseX  = (LOGICAL_W - (cardW*n + (n-1)*8))/2;
-  const y      = FIELD_H + 32;
-
-  for(let i=0;i<n;i++){
-    const card = cards[i];
-    const x = baseX + i*(cardW+8);
-    const rect = {x,y,w:cardW,h:80, id:card.id};
-    uiCardRects.push(rect);
-    const lvl = cardLevel(card.id);
-    const locked = lvl===0;
-
+  if(notEnoughMana>0){
     ctx.save();
-    ctx.translate(x,y);
-    ctx.fillStyle="rgba(15,23,42,0.96)";
-    ctx.fillRect(0,0,cardW,80);
-    ctx.strokeStyle="#4b5563";
-    ctx.lineWidth=1.5;
-    ctx.strokeRect(0,0,cardW,80);
-
-    // icona
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(4,4,46,46);
-    ctx.clip();
-    ctx.translate(27,27);
-    const dummy = { team:"P", role:card.role, cardId:card.id, lvl:lvl||1};
-    drawChibi("#4b97ff","#1f5fb8", dummy);
-    ctx.restore();
-
-    // nome + costo
-    ctx.font="12px system-ui";
-    ctx.fillStyle="#e5e7eb";
-    ctx.textAlign="left";
-    ctx.fillText(card.name, 54, 18);
-    ctx.fillStyle="#bfdbfe";
-    ctx.fillText("Costo: "+card.cost, 54, 36);
-
-    if(locked){
-      ctx.fillStyle="#f97373";
-      ctx.fillText("🔒 bloccata", 54, 54);
-    }else{
-      ctx.fillStyle="#bbf7d0";
-      ctx.fillText("Lv"+(lvl||1), 54, 54);
-    }
-
+    ctx.globalAlpha=Math.min(1,notEnoughMana/0.6);
+    ctx.fillStyle='rgba(0,0,0,0.85)';
+    ctx.fillRect(W/2-80,y0+UI_H/2-18,160,36);
+    ctx.fillStyle='#ffb3b3';
+    ctx.textAlign='center';
+    ctx.font='13px system-ui';
+    ctx.fillText('Mana insufficiente', W/2, y0+UI_H/2+4);
     ctx.restore();
   }
-
-  // Riavvia in fondo a destra
-  const rx = LOGICAL_W-110, ry=FIELD_H+30, rw=96,rh=28;
-  ctx.fillStyle="#111827";
-  ctx.fillRect(rx,ry,rw,rh);
-  ctx.strokeStyle="#4b5563";
-  ctx.strokeRect(rx,ry,rw,rh);
-  ctx.font="12px system-ui";
-  ctx.fillStyle="#e5e7eb";
-  ctx.textAlign="center";
-  ctx.fillText("Riavvia", rx+rw/2, ry+18);
-  uiCardRects.push({x:rx,y:ry,w:rw,h:rh, id:"restart"});
 }
 
-// ==================== Main rendering ====================
-function render(){
-  ctx.setTransform(scale,0,0,scale,offX,offY);
-  ctx.clearRect(0,0,LOGICAL_W,LOGICAL_H);
-
-  if(screen==="deck"){
-    drawDeckScreen();
-  }else{
-    drawBackground();
-    drawCrystal();
-    for(const t of state.enemyTowers) drawTower(t,false);
-    for(const t of state.playerTowers) drawTower(t,true);
-    for(const u of state.units) drawUnit(u);
-    drawProjectiles();
-    drawParticles();
-    drawFloats();
-    drawTopBar();
-    drawManaBar();
-    drawCardBar();
-
-    // Messaggio fine partita
-    if(!state.playing && state.winner){
-      const txt = state.winner==="P" ? "🏆 Vittoria!" :
-                  state.winner==="E" ? "Sconfitta…" : "Pareggio";
-      ctx.fillStyle="rgba(0,0,0,0.65)";
-      ctx.fillRect(60,FIELD_H/2-60,LOGICAL_W-120,120);
-      ctx.font="26px system-ui";
-      ctx.textAlign="center";
-      ctx.fillStyle="#f9fafb";
-      ctx.fillText(txt, LOGICAL_W/2, FIELD_H/2-18);
-      ctx.font="14px system-ui";
-      ctx.fillStyle="#e5e7eb";
-      ctx.fillText("Tocca 'Riavvia' o torna al mazzo (icona in basso al centro).", LOGICAL_W/2, FIELD_H/2+16);
-    }
-  }
+function drawResult(){
+  if(!state.result) return;
+  ctx.fillStyle='rgba(0,0,0,0.7)';
+  ctx.fillRect(0,FIELD_H/2-50,W,100);
+  ctx.fillStyle='#fff';
+  ctx.textAlign='center';
+  ctx.font='24px system-ui';
+  const t = state.result==='win'?'Vittoria!':(state.result==='lose'?'Sconfitta':'Pareggio');
+  ctx.fillText(t,W/2,FIELD_H/2-8);
+  ctx.font='14px system-ui';
+  ctx.fillStyle='#d7e0ff';
+  ctx.fillText("Tocca 'Riavvia' per giocare di nuovo.",W/2,FIELD_H/2+18);
 }
 
-// ==================== Input handling ====================
-canvas.addEventListener("pointerdown", (ev)=>{
-  const p = toLogical(ev);
-  if(screen==="deck"){
-    handleDeckTap(p);
-  }else{
-    handleBattleTap(p);
-  }
-});
-
-function pointInRect(p, r){
-  return p.x>=r.x && p.x<=r.x+r.w && p.y>=r.y && p.y<=r.y+r.h;
-}
-
-function handleDeckTap(p){
-  for(const r of deckCardRects){
-    if(pointInRect(p,r)){
-      const card = getCard(r.id);
-      const lvl  = cardLevel(card.id);
-      if(lvl===0) return; // locked
-      const idx = selectedDeck.indexOf(card.id);
-      if(idx>=0) selectedDeck.splice(idx,1);
-      else{
-        if(selectedDeck.length<4) selectedDeck.push(card.id);
-      }
-      return;
-    }
-  }
-  if(playButtonRect && pointInRect(p,playButtonRect)){
-    if(!selectedDeck.length) return;
-    resetBattle();
-    screen="battle";
-  }
-}
-
-function handleBattleTap(p){
-  // tap in campo -> cambia corsia selezionata
-  if(p.y < FIELD_H){
-    let col=0;
-    if(p.x> (COL_X[0]+COL_X[1])/2) col=2;
-    else if(p.x> (COL_X[0]+COL_X[2])/2 - (COL_X[2]-COL_X[0])/2) col=1;
-    laneSelected = col;
-    return;
-  }
-  // tap su carte
-  for(const r of uiCardRects){
-    if(pointInRect(p,r)){
-      if(r.id==="restart"){
-        resetBattle();
-        return;
-      }
-      const card = getCard(r.id);
-      const lvl  = cardLevel(card.id);
-      if(lvl===0) return;
-      if(state.manaP < card.cost) return;
-      spawnUnit("P", laneSelected, card.id);
-      state.manaP = Math.max(0, state.manaP-card.cost);
-      return;
-    }
-  }
-}
-
-// ==================== Install hint for PWA ====================
-let deferredPrompt = null;
-window.addEventListener("beforeinstallprompt", (e)=>{
-  e.preventDefault();
-  deferredPrompt = e;
-  const hint = document.getElementById("installHint");
-  hint.style.display = "block";
-  hint.onclick = async ()=>{
-    hint.style.display="none";
-    if(deferredPrompt){
-      deferredPrompt.prompt();
-      deferredPrompt = null;
-    }
-  };
-});
-
-// ==================== Main loop ====================
+// loop
+let last=performance.now();
 function loop(now){
-  const dt = (now - lastTime)/1000;
-  lastTime = now;
-  if(screen==="battle") updateBattle(dt);
-  render();
+  const dt=Math.min(0.05,(now-last)/1000);
+  last=now;
+  update(dt);
+  ctx.setTransform(scale,0,0,scale,offX,offY);
+  ctx.clearRect(0,0,W,H);
+  bg();
+  for(const t of state.towersE) drawTower(t);
+  for(const t of state.towersP) drawTower(t);
+  drawCrystal();
+  for(const u of state.units) drawUnit(u);
+  drawBullets();
+  drawHud();
+  drawUI();
+  drawResult();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
-// ==================== Service worker register ====================
-if("serviceWorker" in navigator){
-  navigator.serviceWorker.register("service-worker.js").catch(()=>{});
+// input
+function onPointer(ev){
+  ev.preventDefault();
+  const p = ('touches' in ev && ev.touches.length)
+    ? toLogical(ev.touches[0].clientX,ev.touches[0].clientY)
+    : toLogical(ev.clientX,ev.clientY);
+  const x=p.x,y=p.y;
+  if(x<0||x>W||y<0||y>H) return;
+  if(y>FIELD_H){
+    for(const r of cardRects){
+      if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
+        const c=cards[r.index];
+        if(c.key==='restart') resetGame();
+        else spawnP(c.key);
+        return;
+      }
+    }
+  }else{
+    let best=0,bd=1e9;
+    for(let i=0;i<LANES_X.length;i++){
+      const d=Math.abs(LANES_X[i]-x);
+      if(d<bd){bd=d;best=i;}
+    }
+    selectedLane=best;
+  }
+}
+canvas.addEventListener('mousedown',onPointer);
+canvas.addEventListener('touchstart',onPointer,{passive:false});
+
+// PWA
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
 }
 </script>
 </body>
