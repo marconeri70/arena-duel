@@ -20,7 +20,7 @@
 <body>
 <div id="topbar">
   <div id="crumb">Menu → Gioca</div>
-  <div id="tip">In partita: tocca corsia <b>A/B/C</b>, poi una carta per piazzare.</div>
+  <div id="tip">In partita: tocca corsia <b>A/B/C</b>, poi una carta per piazzare. La corsia centrale contiene il Cristallo del Mana: distruggerlo ti dà bonus mana.</div>
 </div>
 <canvas id="game"></canvas>
 <button id="install">Installa app</button>
@@ -99,6 +99,7 @@ const state={
     {x:W*0.25,y:95,hp:100,max:100,range:150,rate:1.0,cd:0,muzzle:{x:10,y:-18}},
     {x:W*0.75,y:95,hp:100,max:100,range:150,rate:1.0,cd:0,muzzle:{x:10,y:-18}}
   ],
+  manaCrystal:{x:COL_X[1],y:RIVER_Y,hp:80,max:80,alive:true,lastHit:null,owner:null},
   units:[], particles:[], floats:[], projectiles:[]
 };
 
@@ -204,7 +205,8 @@ function step(dt){
   for(const u of state.units){
     const enemy = u.team==='P' ? 'E' : 'P';
     const foes  = state.units.filter(x=>x.team===enemy && x.col===u.col);
-    const towers= (enemy==='E'?state.enemyTowers:state.playerTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
+    let towers= (enemy==='E'?state.enemyTowers:state.playerTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
+    if(state.manaCrystal && state.manaCrystal.alive && u.col===1){ towers = towers.concat([state.manaCrystal]); }
     const allies= state.units.filter(x=>x.team===u.team && x.col===u.col);
     const allyT = (u.team==='P'?state.playerTowers:state.enemyTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
     u.cd-=dt;
@@ -250,7 +252,7 @@ function step(dt){
       } else if(!stopped){ u.y+=u.spd*u.dir*60*dt; }
     } else {
       const {t,dist}=nearest(u,towers,foes);
-      if(t && dist<=u.range){ if(u.cd<=0){u.cd=u.rate; damage(t,u.atk);} }
+      if(t && dist<=u.range){ if(u.cd<=0){u.cd=u.rate; if(t===state.manaCrystal) state.manaCrystal.lastHit=u.team; damage(t,u.atk);} }
       else if(!stopped){ u.y+=u.spd*u.dir*60*dt; }
     }
   }
@@ -266,13 +268,30 @@ function step(dt){
                           : (p.team==='P'?state.enemyTowers:state.playerTowers);
       for(const t of towers){ const d=Math.hypot(t.x-p.x,t.y-p.y); if(d<22){hit=t; break;} }
     }
-    if(hit){ if(p.heal) heal(hit,p.dmg); else damage(hit,p.dmg); p.life=0; }
+    if(!hit && state.manaCrystal && state.manaCrystal.alive){
+      const d=Math.hypot(state.manaCrystal.x-p.x,state.manaCrystal.y-p.y);
+      if(d<24){ hit=state.manaCrystal; }
+    }
+    if(hit){ if(hit===state.manaCrystal) state.manaCrystal.lastHit=p.team; if(p.heal) heal(hit,p.dmg); else damage(hit,p.dmg); p.life=0; }
   }
   state.projectiles=state.projectiles.filter(p=>p.life>0 && p.x>-20 && p.x<W+20 && p.y>-20 && p.y<FIELD_H+20);
 
   state.units=state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
   for(const f of state.floats){ f.t+=dt; f.y-=24*dt; } state.floats=state.floats.filter(f=>f.t<.9);
   for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.04; } state.particles=state.particles.filter(p=>p.t<p.life);
+
+  if(state.manaCrystal && state.manaCrystal.alive && state.manaCrystal.hp<=0){
+    state.manaCrystal.alive=false; state.manaCrystal.owner=state.manaCrystal.lastHit;
+    const cx=state.manaCrystal.x, cy=state.manaCrystal.y-24;
+    if(state.manaCrystal.owner==='P'){
+      state.manaMax+=3; state.manaP=Math.min(state.manaMax, state.manaP+5);
+      addFloat(cx,cy,'Cristallo del mana tuo!','#7dd3fc');
+      for(let i=0;i<18;i++) addHit(cx,cy,'#7dd3fc');
+    } else if(state.manaCrystal.owner==='E'){
+      state.manaE=Math.min(state.manaMax, state.manaE+5);
+      for(let i=0;i<12;i++) addHit(cx,cy,'#fca5a5');
+    }
+  }
 
   const pAlive=state.playerTowers.filter(t=>t.hp>0).length;
   const eAlive=state.enemyTowers.filter(t=>t.hp>0).length;
@@ -339,6 +358,69 @@ function tower(t,friendly){
   ctx.save(); ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=8;
   ctx.fillStyle=friendly?'#3b7ae0':'#d14f4f'; ctx.beginPath(); ctx.arc(t.x,t.y,18,0,Math.PI*2); ctx.fill(); ctx.restore();
   ctx.fillStyle='#1e2935'; ctx.fillRect(t.x-6,t.y-3,12,10);
+}
+
+function drawCrystal(c){
+  // pedestal
+  softShadow(c.x,c.y+18,28,12,0.32);
+  ctx.save();
+  ctx.translate(c.x,c.y);
+  const bob=Math.sin((state.time||0)*2)*4;
+  ctx.translate(0,bob);
+  ctx.fillStyle='#3d2b1f';
+  ctx.beginPath(); ctx.roundRect(-22,14,44,16,4); ctx.fill();
+  ctx.fillStyle='#71513a';
+  ctx.beginPath(); ctx.roundRect(-18,10,36,14,4); ctx.fill();
+
+  // crystal body (manga style)
+  const g=ctx.createLinearGradient(0,-32,0,8);
+  const owned=state.manaCrystal.owner;
+  const baseColor = owned==='P' ? '#7ff2ff' : owned==='E' ? '#ff9bb5' : '#e0f0ff';
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(0.35, baseColor);
+  g.addColorStop(1, '#2563eb');
+  ctx.fillStyle=g;
+  ctx.beginPath();
+  ctx.moveTo(0,-34);
+  ctx.lineTo(20,-8);
+  ctx.lineTo(10,12);
+  ctx.lineTo(0,22);
+  ctx.lineTo(-10,12);
+  ctx.lineTo(-20,-8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle='rgba(15,23,42,0.9)';
+  ctx.lineWidth=2;
+  ctx.stroke();
+
+  // inner light
+  ctx.globalAlpha=0.6;
+  ctx.fillStyle='rgba(255,255,255,0.9)';
+  ctx.beginPath(); ctx.moveTo(-4,-20); ctx.lineTo(2,-4); ctx.lineTo(-8,4); ctx.closePath(); ctx.fill();
+  ctx.globalAlpha=1;
+
+  // halo
+  const glow=ctx.createRadialGradient(0,0,0,0,0,40);
+  glow.addColorStop(0,'rgba(125,211,252,0.9)');
+  glow.addColorStop(1,'rgba(56,189,248,0)');
+  ctx.globalAlpha=0.35; ctx.fillStyle=glow;
+  ctx.beginPath(); ctx.arc(0,0,40,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // hp bar while alive
+  if(c.alive){
+    const ratio=clamp(c.hp/c.max,0,1);
+    const w=80,h=8;
+    ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(c.x-w/2,c.y-40,w,h);
+    const hpGrad=ctx.createLinearGradient(c.x-w/2,0,c.x+w/2,0);
+    hpGrad.addColorStop(0,'#6be6ff'); hpGrad.addColorStop(1,'#3b82f6');
+    ctx.fillStyle=hpGrad; ctx.fillRect(c.x-w/2,c.y-40,w*ratio,h);
+  } else if(c.owner==='P'){
+    // small icon to show that the player controls it
+    ctx.font='700 12px system-ui';
+    ctx.textAlign='center'; ctx.fillStyle='#7dd3fc';
+    ctx.fillText('Bonus mana tuo', c.x, c.y-42);
+  }
 }
 function drawUnit(u){
   ctx.save(); ctx.globalAlpha=.18; ctx.fillStyle=(u.team==='P')?'#7fb6ff':'#ff9b9b';
@@ -425,6 +507,7 @@ function drawCards(){
     ctx.fillStyle='#dbe7ff'; ctx.font='600 14px system-ui'; ctx.textAlign='center';
     ctx.fillText(c.label, x+w/2, y+18);
     ctx.save(); ctx.translate(x+w/2, y+42);
+    const tt=(state.time||0); const s=1+0.08*Math.sin(tt*3+i*0.8); ctx.scale(s,s);
     if(c.type==='scout'){ ctx.fillStyle='#7fb6ff'; ctx.beginPath(); ctx.arc(0,0,10,0,Math.PI*2); ctx.fill(); }
     else if(c.type==='spark'){ ctx.fillStyle='#ffd089'; ctx.beginPath(); ctx.moveTo(-10,10); ctx.lineTo(10,10); ctx.lineTo(0,-10); ctx.closePath(); ctx.fill(); }
     else if(c.type==='tank'){ ctx.fillStyle='#ffb36a'; ctx.fillRect(-10,-8,20,16); }
@@ -487,6 +570,7 @@ function loop(t){
   ctx.save(); ctx.fillStyle='#0b0e13'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.restore();
   ctx.save(); ctx.translate(offX,offY); ctx.scale(scale,scale);
   bg();
+  if(state.manaCrystal) drawCrystal(state.manaCrystal);
   for(const t of state.enemyTowers) tower(t,false);
   for(const t of state.playerTowers) tower(t,true);
   for(const u of state.units) drawUnit(u);
