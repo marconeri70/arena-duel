@@ -1,598 +1,1053 @@
 <!doctype html>
 <html lang="it">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>Arena Vertical – PWA</title>
-<meta name="theme-color" content="#0a0d12">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Arena Duel – Realistic Vertical</title>
 <style>
-  :root{--bg:#0f1115;--panel:#10141a;--ink:#d7e0ea;--accent:#6fb0ff}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
-  #topbar{position:fixed;left:0;right:0;top:0;height:44px;background:#0a0d12;display:flex;align-items:center;padding:0 10px;gap:6px;z-index:2;box-shadow:0 2px 0 #0006}
-  #crumb{opacity:.9;font-size:14px}
-  #tip{flex:1;text-align:center;font-weight:600;font-size:14px;color:#dfe8f9}
-  canvas{position:fixed;inset:44px 0 0 0;width:100vw;height:calc(100vh - 44px);display:block;touch-action:none;-webkit-tap-highlight-color:transparent;background:#0b0e13}
-  #install{position:fixed;right:12px;bottom:12px;background:#18202a;color:#cfe3ff;border:1px solid #2a3340;border-radius:10px;padding:8px 12px;box-shadow:0 6px 16px #0008;display:none}
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #050608;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #fff;
+    overscroll-behavior: none;
+  }
+  canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    background: #050608;
+  }
 </style>
 </head>
 <body>
-<div id="topbar">
-  <div id="crumb">Menu → Gioca</div>
-  <div id="tip">In partita: tocca corsia <b>A/B/C</b>, poi una carta per piazzare. La corsia centrale contiene il Cristallo del Mana: distruggerlo ti dà bonus mana.</div>
-</div>
 <canvas id="game"></canvas>
-<button id="install">Installa app</button>
-
 <script>
-/* Canvas setup */
-const canvas=document.getElementById('game');
-const ctx=canvas.getContext('2d',{alpha:false});
-const W=720,H=1280,UI_H=200,FIELD_H=H-UI_H;
-let scale=1,offX=0,offY=0;
-function resize(){
-  const r=canvas.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
-  canvas.width=Math.max(1,Math.round(r.width*dpr));
-  canvas.height=Math.max(1,Math.round(r.height*dpr));
-  scale=Math.min(canvas.width/W, canvas.height/H);
-  offX=Math.floor((canvas.width-W*scale)/2);
-  offY=Math.floor((canvas.height-H*scale)/2);
-}
-addEventListener('resize',resize); addEventListener('orientationchange',resize); resize();
-function toLogical(ev){
-  const r=canvas.getBoundingClientRect();
-  const X=(ev.clientX-r.left)*(canvas.width/r.width);
-  const Y=(ev.clientY-r.top )*(canvas.height/r.height);
-  return {x:(X-offX)/scale, y:(Y-offY)/scale};
-}
+/* ============================================================
+   1. CANVAS & SCALING (VERTICALE)
+   ============================================================ */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d', { alpha:false });
 
-/* helpers */
-const rand=(a,b)=>a+Math.random()*(b-a);
-const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const LOGICAL_W = 720;
+const LOGICAL_H = 1280;
+const UI_H = 210;
+const FIELD_H = LOGICAL_H - UI_H;
+const RIVER_Y = FIELD_H * 0.50;
+const LANES_X = [LOGICAL_W*0.18, LOGICAL_W*0.50, LOGICAL_W*0.82];
 
-let tex={grass:null,dirt:null};
-function makePattern(fn,w=128,h=128){
-  const c=document.createElement('canvas'); c.width=w; c.height=h;
-  const g=c.getContext('2d'); fn(g,w,h); return g.createPattern(c,'repeat');
-}
-function buildTextures(){
-  tex.grass=makePattern((g,w,h)=>{
-    const grd=g.createLinearGradient(0,0,0,h);
-    grd.addColorStop(0,'#eae3b4'); grd.addColorStop(1,'#d7cd91');
-    g.fillStyle=grd; g.fillRect(0,0,w,h);
-    for(let i=0;i<900;i++){
-      g.fillStyle=`rgba(90,80,40,${0.04+Math.random()*0.05})`;
-      g.fillRect(Math.random()*w,Math.random()*h,1,1);
-    }
-  });
-  tex.dirt=makePattern((g,w,h)=>{
-    g.fillStyle='#cfae7a'; g.fillRect(0,0,w,h);
-    for(let i=0;i<600;i++){
-      g.fillStyle=`rgba(90,50,30,${0.05+Math.random()*0.07})`;
-      g.beginPath(); g.arc(Math.random()*w,Math.random()*h,Math.random()*1.2,0,Math.PI*2); g.fill();
-    }
-  });
-}
-buildTextures();
+let scale = 1, offX = 0, offY = 0;
 
-function softShadow(x,y,rx,ry,alpha=0.22){
-  ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle='#000';
-  ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+function resize() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = Math.max(1, Math.round(rect.width * dpr));
+  canvas.height = Math.max(1, Math.round(rect.height * dpr));
+  scale = Math.min(canvas.width / LOGICAL_W, canvas.height / LOGICAL_H);
+  offX = Math.floor((canvas.width  - LOGICAL_W * scale) / 2);
+  offY = Math.floor((canvas.height - LOGICAL_H * scale) / 2);
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', resize);
+resize();
+
+function toLogical(evt) {
+  const rect = canvas.getBoundingClientRect();
+  const px = (evt.clientX - rect.left) * (canvas.width/rect.width);
+  const py = (evt.clientY - rect.top ) * (canvas.height/rect.height);
+  return {
+    x: (px - offX) / scale,
+    y: (py - offY) / scale
+  };
 }
 
-/* game state */
-const COL_X=[W*0.18,W*0.5,W*0.82];
-const RIVER_Y=FIELD_H*0.5;
-let selectedCol=1, last=performance.now(), notEnoughManaBlink=0;
+/* ============================================================
+   2. UTILITY
+   ============================================================ */
+const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+const rand  = (a,b)=>a + Math.random()*(b-a);
 
-const state={
-  manaP:5, manaE:5, manaMax:10, manaRegen:0.016,
-  time:0, playing:true,
-  match:{t:0,len:120},
-  crowns:{you:0,enemy:0},
-  playerTowers:[
-    {x:W*0.25,y:FIELD_H-95,hp:100,max:100,range:150,rate:1.0,cd:0,muzzle:{x:10,y:-18}},
-    {x:W*0.75,y:FIELD_H-95,hp:100,max:100,range:150,rate:1.0,cd:0,muzzle:{x:10,y:-18}}
+function softShadow(x,y,rx,ry,a=0.24) {
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/* ============================================================
+   3. GAME STATE
+   ============================================================ */
+const state = {
+  time: 0,
+  running: true,
+  mana: 7,
+  manaMax: 13,
+  manaRegen: 2.4, // per secondo
+  enemyMana: 7,
+  enemyManaRegen: 2.0,
+  matchTime: 0,
+  matchDuration: 120,
+  selectedLane: 1,
+  selectedCard: null,
+  notEnoughBlink: 0,
+  units: [],
+  projectiles: [],
+  floats: [],
+  particles: [],
+  crowns: {you:0, enemy:0},
+  // Torri: lane 0 = sinistra, lane 2 = destra
+  playerTowers: [
+    {lane:0,x:LANES_X[0],y:FIELD_H-95,hp:140,max:140},
+    {lane:2,x:LANES_X[2],y:FIELD_H-95,hp:140,max:140}
   ],
-  enemyTowers:[
-    {x:W*0.25,y:95,hp:100,max:100,range:150,rate:1.0,cd:0,muzzle:{x:10,y:-18}},
-    {x:W*0.75,y:95,hp:100,max:100,range:150,rate:1.0,cd:0,muzzle:{x:10,y:-18}}
+  enemyTowers: [
+    {lane:0,x:LANES_X[0],y:95,hp:140,max:140},
+    {lane:2,x:LANES_X[2],y:95,hp:140,max:140}
   ],
-  manaCrystal:{x:COL_X[1],y:RIVER_Y,hp:80,max:80,alive:true,lastHit:null,owner:null},
-  units:[], particles:[], floats:[], projectiles:[]
+  // Cristallo di mana centrale
+  crystal:{
+    lane:1,
+    x:LANES_X[1],
+    y:RIVER_Y+10,
+    hp:90,
+    max:90,
+    alive:true,
+    lastHit:null
+  }
 };
 
-/* sfx */
-let ac;
-function sfx(kind){ try{
-  ac=ac||new (window.AudioContext||window.webkitAudioContext)();
-  const o=ac.createOscillator(), g=ac.createGain();
-  const map={hit:[220,.05,'square'],place:[660,.06,'square'],win:[880,.35,'triangle'],lose:[160,.35,'triangle'],heal:[520,.07,'sine'],shoot:[780,.05,'triangle'],t_shoot:[520,.06,'square']};
-  const [f,t,w]=(map[kind]||[440,.08,'square']); o.type=w; o.frequency.value=f; g.gain.value=.06;
-  o.connect(g); g.connect(ac.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime+t); o.stop(ac.currentTime+t);
-}catch{} }
+const CARDS = [
+  {id:"scout",  label:"Scout",  cost:3},
+  {id:"spark",  label:"Spark",  cost:2},
+  {id:"tank",   label:"Tank",   cost:4},
+  {id:"healer", label:"Healer", cost:3},
+  {id:"restart",label:"Riavvia",cost:0}
+];
+const cardRects = [];
 
-/* effects */
-function addFloat(x,y,v,c){ state.floats.push({x,y,v,c,t:0}); }
-function addHit(x,y,c){ for(let i=0;i<8;i++) state.particles.push({x,y,vx:rand(-1,1),vy:rand(-1.2,-.2),life:rand(.25,.5),t:0,c}); }
-function damage(t,d){ if(!('hp'in t))return; t.hp-=d; const c=d>=0?'#ffb36a':'#6afc86'; addFloat(t.x,t.y-24,(d>=0?'-':'+')+Math.abs(d),c); addHit(t.x,t.y-6,c); sfx(d>=0?'hit':'heal'); }
-function heal(t,a){ if(!('hp'in t))return; const b=t.hp; t.hp=Math.min(t.max,t.hp+a); if(t.hp>b){ addFloat(t.x,t.y-24,'+'+Math.round(t.hp-b),'#6afc86'); sfx('heal'); }}
-
-/* units & bullets */
-function addUnit(team,col,type){
-  const x=COL_X[col], y=(team==='P')?FIELD_H-140:140, dir=(team==='P')?-1:1;
-  const u={team,x,y,dir,col,type,cd:0,maxhp:1,hp:1,spd:1,atk:1,range:24,rate:1};
-  if(type==='scout') Object.assign(u,{spd:1.2,hp:16,maxhp:16,atk:3,range:22,rate:.5});
-  else if(type==='tank') Object.assign(u,{spd:.7,hp:60,maxhp:60,atk:6,range:26,rate:1.0});
-  else if(type==='spark')Object.assign(u,{spd:.9,hp:12,maxhp:12,atk:8,range:120,rate:0.9});
-  else if(type==='healer')Object.assign(u,{spd:1.0,hp:18,maxhp:18,atk:-6,range:90,rate:1.0});
-  state.units.push(u); sfx('place');
+/* ============================================================
+   4. FLOATING TEXT & PARTICLES
+   ============================================================ */
+function addFloat(x,y,text,color="#fff") {
+  state.floats.push({x,y,text,color,t:0,life:0.9});
 }
-function fireProjectile(src, target, opts){
-  const dx=target.x-src.x, dy=target.y-src.y, L=Math.hypot(dx,dy)||1;
-  const vx=(dx/L)*(opts.speed||420), vy=(dy/L)*(opts.speed||420);
-  state.projectiles.push({x:src.x,y:src.y,vx,vy,team:opts.team,heal:!!opts.heal,dmg:opts.dmg||8,life:1.5,colorA:opts.colorA||'#fffacd',colorB:opts.colorB||'#7fb6ff',from:opts.kind||'unit'});
-  sfx(opts.kind==='tower'?'t_shoot':'shoot');
-}
-
-/* AI */
-let aiT=2.1;
-function ai(dt){
-  aiT-=dt;
-  if(aiT<=0 && state.playing){
-    aiT=rand(1.3,2.5);
-    const m=Math.floor(state.manaE), pool=[];
-    if(m>=2) pool.push('spark'); if(m>=3) pool.push('scout','healer'); if(m>=4) pool.push('tank');
-    if(pool.length){
-      const tp=pool[(Math.random()*pool.length)|0];
-      const cost=tp==='tank'?4:(tp==='scout'||tp==='healer'?3:2);
-      state.manaE=Math.max(0, state.manaE-cost);
-      addUnit('E', (Math.random()*3)|0, tp);
-    }
+function addHitParticles(x,y,color="#ffb36a") {
+  for (let i=0;i<10;i++) {
+    state.particles.push({
+      x,y,
+      vx: rand(-1,1),
+      vy: rand(-1.5,-0.3),
+      g: 0.04,
+      t: 0,
+      life: rand(0.3,0.7),
+      color
+    });
   }
 }
 
-/* update */
-function nearest(u,towers,foes){
-  let best=null,score=1e9;
-  for(const f of foes){ const s=Math.abs(f.y*u.dir-u.y*u.dir)+Math.abs(f.x-u.x)*.25; if(s<score){score=s;best=f;} }
-  if(!best){ let tg=null,sm=1e9; for(const t of towers){ const s=Math.abs(t.y-u.y)+Math.abs(t.x-u.x)*.3; if(t.hp>0 && s<sm){sm=s; tg=t;} } best=tg; }
-  return {t:best, dist:best?Math.hypot(best.x-u.x,best.y-u.y):1e9};
+/* ============================================================
+   5. DAMAGE / HEAL HELPERS
+   ============================================================ */
+function applyDamage(target,amount) {
+  if (!target || target.hp<=0) return;
+  target.hp -= amount;
+  addHitParticles(target.x,target.y-6, amount>0 ? "#ffb36a" : "#7cf6a2");
+  addFloat(target.x,target.y-24,(amount>0?"-":"+")+Math.round(Math.abs(amount)),
+           amount>0?"#ffb36a":"#7cf6a2");
 }
-function towerAI(dt){
-  for(const tw of state.playerTowers){
-    tw.cd-=dt; if(tw.hp<=0) continue;
-    let target=null,best=1e9;
-    for(const u of state.units.filter(u=>u.team==='E')){
-      if(u.y>=tw.y) continue;
-      const d=Math.hypot(u.x-tw.x,u.y-tw.y);
-      if(d<tw.range && d<best){best=d; target=u;}
-    }
-    if(target && tw.cd<=0){
-      tw.cd=tw.rate;
-      const mx=tw.x+(tw.muzzle?.x||0), my=tw.y+(tw.muzzle?.y||0);
-      fireProjectile({x:mx,y:my},target,{team:'P',heal:false,dmg:7,speed:540,colorA:'#a8c9ff',colorB:'#7fb6ff',kind:'tower'});
-      addHit(mx,my,'#9ec9ff');
-    }
-  }
-  for(const tw of state.enemyTowers){
-    tw.cd-=dt; if(tw.hp<=0) continue;
-    let target=null,best=1e9;
-    for(const u of state.units.filter(u=>u.team==='P')){
-      if(u.y<=tw.y) continue;
-      const d=Math.hypot(u.x-tw.x,u.y-tw.y);
-      if(d<tw.range && d<best){best=d; target=u;}
-    }
-    if(target && tw.cd<=0){
-      tw.cd=tw.rate;
-      const mx=tw.x+(tw.muzzle?.x||0), my=tw.y+(tw.muzzle?.y||0);
-      fireProjectile({x:mx,y:my},target,{team:'E',heal:false,dmg:7,speed:540,colorA:'#ffc1c1',colorB:'#ff9b9b',kind:'tower'});
-      addHit(mx,my,'#ffc1c1');
-    }
+function applyHeal(target,amount) {
+  if (!target || target.hp<=0) return;
+  const before = target.hp;
+  target.hp = Math.min(target.max, target.hp + amount);
+  if (target.hp>before) {
+    addHitParticles(target.x,target.y-6,"#7cf6a2");
+    addFloat(target.x,target.y-24,"+"+Math.round(target.hp-before),"#7cf6a2");
   }
 }
 
-function step(dt){
-  if(state.playing){
-    state.match.t+=dt; state.time+=dt;
-    if(state.match.t>=state.match.len){ state.playing=false; sfx('lose'); }
-    state.manaP=clamp(state.manaP+state.manaRegen*60*dt,0,state.manaMax);
-    state.manaE=clamp(state.manaE+state.manaRegen*60*dt,0,state.manaMax);
-    ai(dt);
-    towerAI(dt);
+/* ============================================================
+   6. UNITÀ E PROIETTILI
+   ============================================================ */
+function spawnUnit(team,lane,type) {
+  const x = LANES_X[lane];
+  const dir = (team==="P") ? -1 : 1;
+  const y = (team==="P") ? (FIELD_H-150) : 150;
+  const base = {
+    team,lane,x,y,dir,
+    cd:0,
+    animT:0,
+    vx:0,vy:0
+  };
+  if (type==="scout") {
+    Object.assign(base,{type,spd:80,hp:30,max:30,atk:6,range:30,rate:0.6});
+  } else if (type==="spark") {
+    Object.assign(base,{type,spd:55,hp:20,max:20,atk:12,range:130,rate:0.9});
+  } else if (type==="tank") {
+    Object.assign(base,{type,spd:40,hp:80,max:80,atk:10,range:30,rate:0.9});
+  } else if (type==="healer") {
+    Object.assign(base,{type,spd:55,hp:26,max:26,atk:-10,range:110,rate:0.9});
   }
-  for(const u of state.units){
-    const enemy = u.team==='P' ? 'E' : 'P';
-    const foes  = state.units.filter(x=>x.team===enemy && x.col===u.col);
-    let towers= (enemy==='E'?state.enemyTowers:state.playerTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
-    if(state.manaCrystal && state.manaCrystal.alive && u.col===1){ towers = towers.concat([state.manaCrystal]); }
-    const allies= state.units.filter(x=>x.team===u.team && x.col===u.col);
-    const allyT = (u.team==='P'?state.playerTowers:state.enemyTowers).filter(t=>Math.abs(t.x-u.x)<W*0.35);
-    u.cd-=dt;
+  state.units.push(base);
+}
 
-    const alliesAhead = state.units.filter(a =>
-      a!==u && a.team===u.team && a.col===u.col &&
-      ((u.dir===-1 && a.y < u.y) || (u.dir===1 && a.y > u.y))
-    );
-    let leader=null, bestGap=1e9;
-    for(const a of alliesAhead){
-      const gap=Math.abs(a.y-u.y);
-      if(gap<bestGap){bestGap=gap; leader=a;}
-    }
-    const sep=38;
-    let stopped=false;
-    if(leader && bestGap<sep){
-      const sign=(u.dir===-1)?-1:1;
-      const targetY=leader.y - sign*sep;
-      const maxStep=u.spd*60*dt;
-      const delta=targetY-u.y;
-      if(Math.abs(delta)<=maxStep){ u.y=targetY; stopped=true; }
-      else { u.y+=Math.sign(delta)*maxStep*0.6; stopped=true; }
-    }
+function spawnProjectile(from,target,opts) {
+  const dx = target.x - from.x;
+  const dy = target.y - from.y;
+  const len = Math.hypot(dx,dy)||1;
+  const speed = opts.speed || 260;
+  state.projectiles.push({
+    x:from.x,
+    y:from.y,
+    vx:(dx/len)*speed,
+    vy:(dy/len)*speed,
+    team:opts.team,
+    heal: !!opts.heal,
+    dmg: opts.dmg || 8,
+    life:1.3,
+    colorA:opts.colorA || "#fffacd",
+    colorB:opts.colorB || "#7fb6ff"
+  });
+}
 
-    if(u.type==='healer'){
-      let tgt=null, bestGap2=0;
-      for(const a of allies){
-        const gap=a.maxhp-a.hp, d=Math.hypot(a.x-u.x,a.y-u.y);
-        if(gap>bestGap2 && d<=u.range){ bestGap2=gap; tgt=a; }
-      }
-      for(const t of allyT){
-        const gap=t.max-t.hp, d=Math.hypot(t.x-u.x,t.y-u.y);
-        if(gap>bestGap2 && d<=u.range){ bestGap2=gap; tgt=t; }
-      }
-      if(tgt && u.cd<=0){
-        u.cd=u.rate;
-        fireProjectile(u,tgt,{team:u.team,heal:true,dmg:Math.abs(u.atk),speed:360,colorA:'#a8f5b0',colorB:'#2bd96a'});
-      }else if(!stopped){ u.y+=u.spd*u.dir*60*dt; }
-    } else if(u.type==='spark'){
-      const {t,dist}=nearest(u,towers,foes);
-      if(t && dist<=u.range){
-        if(u.cd<=0){ u.cd=u.rate; fireProjectile(u,t,{team:u.team,heal:false,dmg:u.atk,speed:520,colorA:'#fffacd',colorB:(u.team==='P')?'#7fb6ff':'#ff9b9b'}); }
-      } else if(!stopped){ u.y+=u.spd*u.dir*60*dt; }
+/* ============================================================
+   7. IA SEMPLICE NEMICO
+   ============================================================ */
+let aiTimer = 2;
+function aiUpdate(dt) {
+  aiTimer -= dt;
+  state.enemyMana = clamp(state.enemyMana + state.enemyManaRegen*dt,0,13);
+  if (!state.running) return;
+  if (aiTimer<=0) {
+    aiTimer = rand(1.3,2.4);
+    const m = Math.floor(state.enemyMana);
+    const choices=[];
+    if (m>=2) choices.push("spark");
+    if (m>=3) choices.push("scout","healer");
+    if (m>=4) choices.push("tank");
+    if (!choices.length) return;
+    const t = choices[(Math.random()*choices.length)|0];
+    const cost = t==="tank"?4:(t==="spark"?2:3);
+    state.enemyMana -= cost;
+    const lane = (Math.random()*3)|0;
+    spawnUnit("E",lane,t);
+  }
+}
+
+/* ============================================================
+   8. TARGETING (INCLUDE CRISTALLO CENTRALE!)
+   ============================================================ */
+function nearestTargetForUnit(u) {
+  const enemyTeam = (u.team==="P") ? "E" : "P";
+  const foes = state.units.filter(o => o.team===enemyTeam && o.lane===u.lane && o.hp>0);
+  const enemyTowers = (enemyTeam==="E"?state.enemyTowers:state.playerTowers)
+    .filter(t => t.lane===u.lane && t.hp>0);
+
+  let candidate = null;
+  let bestScore = Infinity;
+
+  // 1) unità nemiche nella stessa corsia
+  for (const f of foes) {
+    const score = Math.abs(f.y - u.y);
+    if (score < bestScore) { bestScore=score; candidate=f; }
+  }
+
+  // 2) torri nella stessa corsia
+  for (const t of enemyTowers) {
+    const score = Math.abs(t.y - u.y) + 40;
+    if (score < bestScore) { bestScore=score; candidate=t; }
+  }
+
+  // 3) CRISTALLO centrale (solo lane 1)
+  if (u.lane===1 && state.crystal.alive && state.crystal.hp>0) {
+    const score = Math.abs(state.crystal.y - u.y) + 20;
+    if (score < bestScore) {
+      bestScore = score;
+      candidate = state.crystal;
+    }
+  }
+
+  return candidate;
+}
+
+/* ============================================================
+   9. UPDATE LOGIC (MOVIMENTO, ATTACCHI, CRISTALLO)
+   ============================================================ */
+function resetGame() {
+  state.time = 0;
+  state.matchTime = 0;
+  state.running = true;
+  state.mana = 7;
+  state.manaMax = 13;
+  state.enemyMana = 7;
+  state.units = [];
+  state.projectiles = [];
+  state.floats = [];
+  state.particles = [];
+  state.crowns = {you:0,enemy:0};
+
+  state.playerTowers.forEach(t=>{t.hp=t.max;});
+  state.enemyTowers.forEach(t=>{t.hp=t.max;});
+  state.crystal.hp = state.crystal.max;
+  state.crystal.alive = true;
+  state.crystal.lastHit = null;
+}
+
+function onCrystalDestroyed(team) {
+  if (!state.crystal.alive) return;
+  state.crystal.alive = false;
+  addFloat(state.crystal.x,state.crystal.y-40,
+           team==="P"?"BONUS MANA!":"+MANAGER NEMICO!","#4ff5ff");
+  addHitParticles(state.crystal.x,state.crystal.y-10,"#4ff5ff");
+  if (team==="P") {
+    state.manaMax += 3;
+    state.mana = clamp(state.mana + 5,0,state.manaMax);
+  } else {
+    state.enemyMana = clamp(state.enemyMana + 5,0,13);
+  }
+}
+
+function update(dt) {
+  state.time += dt;
+  if (state.running) {
+    state.matchTime += dt;
+    state.mana = clamp(state.mana + state.manaRegen*dt, 0, state.manaMax);
+
+    if (state.matchTime >= state.matchDuration) {
+      state.running = false;
+    }
+  }
+
+  aiUpdate(dt);
+
+  // Torri & corone
+  const pAlive = state.playerTowers.filter(t=>t.hp>0).length;
+  const eAlive = state.enemyTowers.filter(t=>t.hp>0).length;
+  state.crowns.you   = 2 - eAlive;
+  state.crowns.enemy = 2 - pAlive;
+  if (state.running && (pAlive===0 || eAlive===0)) {
+    state.running = false;
+  }
+
+  // Unità
+  const minGap = 32;
+  for (const u of state.units) {
+    if (u.hp<=0) continue;
+    u.cd -= dt;
+    u.animT += dt;
+
+    const target = nearestTargetForUnit(u);
+    if (!target) {
+      // nessun bersaglio → avanza
+      u.y += u.dir * u.spd * dt;
     } else {
-      const {t,dist}=nearest(u,towers,foes);
-      if(t && dist<=u.range){ if(u.cd<=0){u.cd=u.rate; if(t===state.manaCrystal) state.manaCrystal.lastHit=u.team; damage(t,u.atk);} }
-      else if(!stopped){ u.y+=u.spd*u.dir*60*dt; }
+      const dist = Math.hypot(target.x-u.x, target.y-u.y);
+      const inRange = (u.type==="spark" || u.type==="healer")
+        ? (dist <= u.range)
+        : (dist <= u.range+4);
+
+      if (inRange && u.cd<=0 && state.running) {
+        u.cd = u.rate;
+        // ranged / healer
+        if (u.type==="spark" || u.type==="healer") {
+          const heal = (u.type==="healer");
+          const dmg = heal ? Math.abs(u.atk) : u.atk;
+          spawnProjectile(u,target,{
+            team:u.team,
+            heal:heal,
+            dmg:dmg,
+            speed: heal?220:320,
+            colorA: heal?"#a6ffcb":"#fff6b3",
+            colorB: heal?"#4de483":(u.team==="P"?"#7fb6ff":"#ff9b9b")
+          });
+        } else {
+          // melee
+          if (target===state.crystal) {
+            state.crystal.hp -= u.atk;
+            state.crystal.lastHit = u.team;
+            addHitParticles(target.x,target.y-6,u.team==="P"?"#7fb6ff":"#ff9b9b");
+            if (state.crystal.hp<=0) onCrystalDestroyed(u.team);
+          } else {
+            applyDamage(target,u.atk);
+          }
+        }
+      } else if (!inRange) {
+        // avanza verso il nemico
+        u.y += u.dir * u.spd * dt;
+      }
     }
   }
 
-  for(const p of state.projectiles){
-    p.life-=dt; p.x+=p.vx*dt; p.y+=p.vy*dt;
-    const enemyTeam=p.team==='P'?'E':'P';
-    const pool=state.units.filter(u=> (p.heal?u.team===p.team:u.team===enemyTeam) );
-    let hit=null;
-    for(const u of pool){ const d=Math.hypot(u.x-p.x,u.y-p.y); if(d<14){hit=u; break;} }
-    if(!hit){
-      const towers=p.heal ? (p.team==='P'?state.playerTowers:state.enemyTowers)
-                          : (p.team==='P'?state.enemyTowers:state.playerTowers);
-      for(const t of towers){ const d=Math.hypot(t.x-p.x,t.y-p.y); if(d<22){hit=t; break;} }
-    }
-    if(!hit && state.manaCrystal && state.manaCrystal.alive){
-      const d=Math.hypot(state.manaCrystal.x-p.x,state.manaCrystal.y-p.y);
-      if(d<24){ hit=state.manaCrystal; }
-    }
-    if(hit){ if(hit===state.manaCrystal) state.manaCrystal.lastHit=p.team; if(p.heal) heal(hit,p.dmg); else damage(hit,p.dmg); p.life=0; }
-  }
-  state.projectiles=state.projectiles.filter(p=>p.life>0 && p.x>-20 && p.x<W+20 && p.y>-20 && p.y<FIELD_H+20);
-
-  state.units=state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
-  for(const f of state.floats){ f.t+=dt; f.y-=24*dt; } state.floats=state.floats.filter(f=>f.t<.9);
-  for(const p of state.particles){ p.t+=dt; p.x+=p.vx*60*dt; p.y+=p.vy*60*dt; p.vy+=.04; } state.particles=state.particles.filter(p=>p.t<p.life);
-
-  if(state.manaCrystal && state.manaCrystal.alive && state.manaCrystal.hp<=0){
-    state.manaCrystal.alive=false; state.manaCrystal.owner=state.manaCrystal.lastHit;
-    const cx=state.manaCrystal.x, cy=state.manaCrystal.y-24;
-    if(state.manaCrystal.owner==='P'){
-      state.manaMax+=3; state.manaP=Math.min(state.manaMax, state.manaP+5);
-      addFloat(cx,cy,'Cristallo del mana tuo!','#7dd3fc');
-      for(let i=0;i<18;i++) addHit(cx,cy,'#7dd3fc');
-    } else if(state.manaCrystal.owner==='E'){
-      state.manaE=Math.min(state.manaMax, state.manaE+5);
-      for(let i=0;i<12;i++) addHit(cx,cy,'#fca5a5');
+  // Anti-sorpasso (le unità non superano la prima della fila)
+  for (const team of ["P","E"]) {
+    for (let lane=0; lane<3; lane++) {
+      const dir = (team==="P")?-1:1;
+      const laneUnits = state.units
+        .filter(u=>u.team===team && u.lane===lane && u.hp>0)
+        .sort((a,b)=> (a.y-b.y)*dir);
+      for (let i=1;i<laneUnits.length;i++) {
+        const front = laneUnits[i-1];
+        const back  = laneUnits[i];
+        const desired = front.y - dir*minGap;
+        if ((dir===-1 && back.y<desired) || (dir===1 && back.y>desired)) {
+          back.y = desired;
+        }
+      }
     }
   }
 
-  const pAlive=state.playerTowers.filter(t=>t.hp>0).length;
-  const eAlive=state.enemyTowers.filter(t=>t.hp>0).length;
-  state.crowns.you=2-eAlive; state.crowns.enemy=2-pAlive;
-  if(state.playing && (pAlive===0 || eAlive===0)){ state.playing=false; sfx(eAlive===0?'win':'lose'); }
+  // Proiettili
+  for (const p of state.projectiles) {
+    p.life -= dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (p.life<=0) continue;
+
+    const enemyTeam = (p.team==="P") ? "E" : "P";
+
+    // bersagli possibili
+    const targets = [];
+    // unità
+    state.units.forEach(u=>{
+      if (u.hp>0 && ((p.heal && u.team===p.team) || (!p.heal && u.team===enemyTeam))) {
+        targets.push(u);
+      }
+    });
+    // torri
+    const towers = p.heal
+      ? (p.team==="P"?state.playerTowers:state.enemyTowers)
+      : (p.team==="P"?state.enemyTowers:state.playerTowers);
+    towers.forEach(t=>{
+      if (t.hp>0) targets.push(t);
+    });
+    // cristallo
+    if (!p.heal && state.crystal.alive && state.crystal.hp>0) {
+      targets.push(state.crystal);
+    }
+
+    let hit = null;
+    for (const t of targets) {
+      const radius = (t===state.crystal)?22:(t.max>=140?26:16);
+      const d = Math.hypot(t.x-p.x, t.y-p.y);
+      if (d < radius) { hit=t; break; }
+    }
+    if (hit) {
+      if (p.heal) {
+        applyHeal(hit,p.dmg);
+      } else {
+        if (hit===state.crystal) {
+          state.crystal.hp -= p.dmg;
+          state.crystal.lastHit = p.team;
+          if (state.crystal.hp<=0) onCrystalDestroyed(p.team);
+        } else {
+          applyDamage(hit,p.dmg);
+        }
+      }
+      p.life = 0;
+    }
+  }
+
+  state.projectiles = state.projectiles.filter(p=>p.life>0);
+
+  // pulizia
+  state.units = state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
+  state.floats.forEach(f=>{f.t+=dt; f.y-=24*dt;});
+  state.floats = state.floats.filter(f=>f.t<f.life);
+  state.particles.forEach(pp=>{
+    pp.t+=dt;
+    pp.x += pp.vx*60*dt;
+    pp.y += pp.vy*60*dt;
+    pp.vy += pp.g;
+  });
+  state.particles = state.particles.filter(pp=>pp.t<pp.life);
+
+  if (state.notEnoughBlink>0) state.notEnoughBlink-=dt*2;
 }
 
-/* rendering */
-function bg(){
-  ctx.fillStyle=tex.grass; ctx.fillRect(0,0,W,FIELD_H);
-  const vg=ctx.createRadialGradient(W/2,FIELD_H/2,Math.min(W,FIELD_H)*0.2, W/2,FIELD_H/2, Math.max(W,FIELD_H)*0.7);
-  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,0.18)'); ctx.fillStyle=vg; ctx.fillRect(0,0,W,FIELD_H);
-  ctx.strokeStyle='#00000010'; ctx.lineWidth=1; ctx.beginPath();
-  for(let y=0;y<=FIELD_H;y+=64){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
-  for(let x=0;x<=W;x+=80){ ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H); }
-  ctx.stroke();
-  ctx.strokeStyle='#a99f72aa'; ctx.lineWidth=2;
-  for(const x of COL_X){ ctx.beginPath(); ctx.moveTo(x,20); ctx.lineTo(x,FIELD_H-20); ctx.stroke(); }
-  ctx.fillStyle=tex.dirt; ctx.fillRect(0,RIVER_Y-28,W,12); ctx.fillRect(0,RIVER_Y+16,W,12);
+/* ============================================================
+   10. RENDER – SFONDO, TORRI, CRISTALLO, UNITÀ, UI
+   ============================================================ */
+function drawBackground() {
+  // erba realistica
+  const grd = ctx.createLinearGradient(0,0,0,FIELD_H);
+  grd.addColorStop(0,"#d7e2a4");
+  grd.addColorStop(1,"#c3d28a");
+  ctx.fillStyle = grd;
+  ctx.fillRect(0,0,LOGICAL_W,FIELD_H);
 
-  const t=state.time||0,h=26;
-  const grad=ctx.createLinearGradient(0,RIVER_Y-h/2,0,RIVER_Y+h/2);
-  grad.addColorStop(0,'#b4ecff'); grad.addColorStop(.5,'#79c6e2'); grad.addColorStop(1,'#5ab3d3');
-  ctx.fillStyle=grad; ctx.fillRect(0,RIVER_Y-h/2,W,h);
-  ctx.save(); ctx.globalAlpha=0.22; ctx.fillStyle='#ffffff';
-  for(let i=0;i<3;i++){
-    ctx.beginPath(); ctx.moveTo(0,RIVER_Y+Math.sin(t*1.2+i)*3);
-    for(let x=0;x<=W;x+=12){ const y=RIVER_Y+Math.sin((x*0.02)+(t*1.2+i))*3; ctx.lineTo(x,y); }
-    ctx.lineTo(W,RIVER_Y+h/2); ctx.lineTo(0,RIVER_Y+h/2); ctx.closePath(); ctx.fill();
+  // texture erba
+  ctx.save();
+  ctx.strokeStyle="rgba(70,100,40,0.18)";
+  ctx.lineWidth=1;
+  for (let i=0;i<900;i++) {
+    const x = Math.random()*LOGICAL_W;
+    const y = Math.random()*FIELD_H;
+    ctx.beginPath();
+    ctx.moveTo(x,y);
+    ctx.lineTo(x+rand(-4,4),y+rand(4,8));
+    ctx.stroke();
   }
   ctx.restore();
 
-  const bridge=(cx)=>{
-    softShadow(cx,RIVER_Y+14,70,12,0.28);
-    ctx.save(); ctx.translate(cx,RIVER_Y);
-    const g=ctx.createLinearGradient(-64,-18,-64,18);
-    g.addColorStop(0,'#a86a33'); g.addColorStop(1,'#7a4a22');
-    ctx.fillStyle=g; ctx.fillRect(-64,-18,128,36);
-    ctx.strokeStyle='#5d3b1d'; ctx.lineWidth=3; ctx.strokeRect(-64,-18,128,36);
-    ctx.strokeStyle='#6d461f';
-    for(let i=-58;i<=58;i+=14){ ctx.beginPath(); ctx.moveTo(i,-18); ctx.lineTo(i,18); ctx.stroke(); }
-    ctx.fillStyle='rgba(255,255,255,0.18)'; ctx.fillRect(-64,-18,128,4);
-    ctx.restore();
-  };
-  bridge(W*0.3); bridge(W*0.7);
+  // zone corsie
+  ctx.fillStyle="rgba(0,0,0,0.08)";
+  for (let i=0;i<3;i++) {
+    if (i===state.selectedLane) {
+      ctx.fillStyle="rgba(0,80,200,0.16)";
+    } else {
+      ctx.fillStyle="rgba(0,0,0,0.06)";
+    }
+    const left = (i===0?0:(i===1?LOGICAL_W*0.34:LOGICAL_W*0.66));
+    const width = (i===1?LOGICAL_W*0.32:LOGICAL_W*0.34);
+    ctx.fillRect(left,0,width,FIELD_H);
+  }
 
-  ctx.fillStyle='#1a7fff18'; ctx.fillRect(COL_X[selectedCol]-W*0.16,0,W*0.32,FIELD_H);
-
-  ctx.font='700 14px system-ui';
-  ['A','B','C'].forEach((lab,i)=>{
-    const x=COL_X[i];
-    ctx.fillStyle='#00000055'; ctx.fillRect(x-14,6,28,18);
-    ctx.fillStyle='#ffe08a'; ctx.textAlign='center'; ctx.fillText(lab,x,20);
-    ctx.fillStyle='#89b8ff'; ctx.beginPath(); ctx.moveTo(x-6,FIELD_H-34); ctx.lineTo(x+6,FIELD_H-34); ctx.lineTo(x,FIELD_H-44); ctx.closePath(); ctx.fill();
-    ctx.fillStyle='#ff9c9c'; ctx.beginPath(); ctx.moveTo(x-6,44); ctx.lineTo(x+6,44); ctx.lineTo(x,54); ctx.closePath(); ctx.fill();
-  });
-}
-function tower(t,friendly){
-  softShadow(t.x,t.y+12,30,10,0.28);
-  const body=ctx.createLinearGradient(t.x,t.y-26,t.x,t.y+26);
-  body.addColorStop(0,'#d6dee8'); body.addColorStop(.5,'#b7c2cf'); body.addColorStop(1,'#a5b1bf');
-  ctx.fillStyle=body; ctx.beginPath(); ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle='#8795a6'; ctx.lineWidth=3; ctx.beginPath(); ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2); ctx.stroke();
-  ctx.save(); ctx.shadowColor='rgba(0,0,0,.25)'; ctx.shadowBlur=8;
-  ctx.fillStyle=friendly?'#3b7ae0':'#d14f4f'; ctx.beginPath(); ctx.arc(t.x,t.y,18,0,Math.PI*2); ctx.fill(); ctx.restore();
-  ctx.fillStyle='#1e2935'; ctx.fillRect(t.x-6,t.y-3,12,10);
-}
-
-function drawCrystal(c){
-  // pedestal
-  softShadow(c.x,c.y+18,28,12,0.32);
-  ctx.save();
-  ctx.translate(c.x,c.y);
-  const bob=Math.sin((state.time||0)*2)*4;
-  ctx.translate(0,bob);
-  ctx.fillStyle='#3d2b1f';
-  ctx.beginPath(); ctx.roundRect(-22,14,44,16,4); ctx.fill();
-  ctx.fillStyle='#71513a';
-  ctx.beginPath(); ctx.roundRect(-18,10,36,14,4); ctx.fill();
-
-  // crystal body (manga style)
-  const g=ctx.createLinearGradient(0,-32,0,8);
-  const owned=state.manaCrystal.owner;
-  const baseColor = owned==='P' ? '#7ff2ff' : owned==='E' ? '#ff9bb5' : '#e0f0ff';
-  g.addColorStop(0, '#ffffff');
-  g.addColorStop(0.35, baseColor);
-  g.addColorStop(1, '#2563eb');
-  ctx.fillStyle=g;
+  // griglia
+  ctx.strokeStyle="rgba(0,0,0,0.10)";
+  ctx.lineWidth=1;
   ctx.beginPath();
-  ctx.moveTo(0,-34);
-  ctx.lineTo(20,-8);
-  ctx.lineTo(10,12);
-  ctx.lineTo(0,22);
-  ctx.lineTo(-10,12);
-  ctx.lineTo(-20,-8);
-  ctx.closePath();
+  for (let y=0;y<=FIELD_H;y+=80) {
+    ctx.moveTo(0,y); ctx.lineTo(LOGICAL_W,y);
+  }
+  for (let x=0;x<=LOGICAL_W;x+=90) {
+    ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H);
+  }
+  ctx.stroke();
+
+  // fiume
+  const waterH = 34;
+  const wgrd = ctx.createLinearGradient(0,RIVER_Y-waterH/2,0,RIVER_Y+waterH/2);
+  wgrd.addColorStop(0,"#b8ecff");
+  wgrd.addColorStop(0.5,"#7bc1e6");
+  wgrd.addColorStop(1,"#4d9ac9");
+  ctx.fillStyle = wgrd;
+  ctx.fillRect(0,RIVER_Y-waterH/2,LOGICAL_W,waterH);
+
+  // sponde
+  ctx.fillStyle="#c29f70";
+  ctx.fillRect(0,RIVER_Y-waterH/2-10,LOGICAL_W,10);
+  ctx.fillRect(0,RIVER_Y+waterH/2,LOGICAL_W,10);
+
+  // ponti
+  function drawBridge(cx) {
+    softShadow(cx,RIVER_Y+14,80,14,0.33);
+    ctx.save();
+    ctx.translate(cx,RIVER_Y);
+    const bg = ctx.createLinearGradient(-70,-20,-70,20);
+    bg.addColorStop(0,"#9b6a3a");
+    bg.addColorStop(1,"#6e4320");
+    ctx.fillStyle = bg;
+    ctx.fillRect(-70,-20,140,40);
+    ctx.strokeStyle="#4b2b14";
+    ctx.lineWidth=3;
+    ctx.strokeRect(-70,-20,140,40);
+    ctx.strokeStyle="#5c3519";
+    for (let x=-60;x<=60;x+=14) {
+      ctx.beginPath();
+      ctx.moveTo(x,-20); ctx.lineTo(x,20); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  drawBridge(LOGICAL_W*0.30);
+  drawBridge(LOGICAL_W*0.70);
+
+  // etichette corsie A / B / C in alto
+  ctx.fillStyle="rgba(0,0,0,0.70)";
+  ctx.fillRect(0,22,LOGICAL_W,22);
+  ctx.font="bold 16px system-ui";
+  ctx.textAlign="center";
+  ctx.textBaseline="middle";
+  const labels=["A","B","C"];
+  for (let i=0;i<3;i++) {
+    ctx.fillStyle= i===state.selectedLane ? "#ffe07a" : "#e0e6ff";
+    ctx.fillText(labels[i], LANES_X[i], 33);
+  }
+}
+
+function drawTower(t,friendly) {
+  if (t.hp<=0) return;
+  softShadow(t.x,t.y+14,32,12,0.32);
+  // base in pietra
+  const body = ctx.createLinearGradient(t.x,t.y-32,t.x,t.y+26);
+  body.addColorStop(0,"#d8dfea");
+  body.addColorStop(0.5,"#b4bfcc");
+  body.addColorStop(1,"#9aa7b8");
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.roundRect(t.x-26,t.y-32,52,52,8);
   ctx.fill();
-  ctx.strokeStyle='rgba(15,23,42,0.9)';
+  ctx.strokeStyle="#707f91";
   ctx.lineWidth=2;
   ctx.stroke();
 
-  // inner light
-  ctx.globalAlpha=0.6;
-  ctx.fillStyle='rgba(255,255,255,0.9)';
-  ctx.beginPath(); ctx.moveTo(-4,-20); ctx.lineTo(2,-4); ctx.lineTo(-8,4); ctx.closePath(); ctx.fill();
-  ctx.globalAlpha=1;
+  // merlature
+  ctx.fillStyle="#f2f4f7";
+  ctx.fillRect(t.x-28,t.y-38,56,10);
+  ctx.strokeStyle="#707f91";
+  ctx.strokeRect(t.x-28,t.y-38,56,10);
 
-  // halo
-  const glow=ctx.createRadialGradient(0,0,0,0,0,40);
-  glow.addColorStop(0,'rgba(125,211,252,0.9)');
-  glow.addColorStop(1,'rgba(56,189,248,0)');
-  ctx.globalAlpha=0.35; ctx.fillStyle=glow;
-  ctx.beginPath(); ctx.arc(0,0,40,0,Math.PI*2); ctx.fill();
+  // scudo colorato
+  ctx.beginPath();
+  ctx.arc(t.x,t.y-6,14,0,Math.PI*2);
+  ctx.fillStyle = friendly ? "#2f6fe8" : "#d34747";
+  ctx.fill();
+  ctx.strokeStyle="#18263a";
+  ctx.stroke();
+
+  // ferito?
+  if (t.hp < t.max*0.35) {
+    ctx.fillStyle="#ffb36a";
+    ctx.beginPath();
+    ctx.moveTo(t.x-6,t.y-24);
+    ctx.lineTo(t.x+6,t.y-24);
+    ctx.lineTo(t.x,t.y-36);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // barra HP
+  const ratio = clamp(t.hp/t.max,0,1);
+  const barW = 80, barH = 8;
+  ctx.fillStyle="rgba(0,0,0,0.55)";
+  ctx.fillRect(t.x-barW/2,t.y-48,barW,barH);
+  const hpGrad = ctx.createLinearGradient(t.x-barW/2,0,t.x+barW/2,0);
+  hpGrad.addColorStop(0, ratio<0.35 ? "#ff6b6b" : "#6aed7b");
+  hpGrad.addColorStop(1, ratio<0.35 ? "#ff9b6b" : "#36c85b");
+  ctx.fillStyle = hpGrad;
+  ctx.fillRect(t.x-barW/2,t.y-48,barW*ratio,barH);
+}
+
+function drawCrystal() {
+  const c = state.crystal;
+  if (!c.alive || c.hp<=0) return;
+  softShadow(c.x,c.y+18,30,12,0.33);
+
+  // piedistallo
+  ctx.fillStyle="#2b2628";
+  ctx.beginPath();
+  ctx.roundRect(c.x-30,c.y+6,60,16,6);
+  ctx.fill();
+
+  // cristallo (rombo sfaccettato)
+  const t = state.time;
+  const floatY = Math.sin(t*2)*4;
+  ctx.save();
+  ctx.translate(c.x,c.y-4+floatY);
+
+  const grad = ctx.createLinearGradient(0,-40,0,20);
+  grad.addColorStop(0,"#e8f7ff");
+  grad.addColorStop(0.4,"#8ecfff");
+  grad.addColorStop(1,"#2f68c9");
+  ctx.fillStyle = grad;
+  ctx.strokeStyle="#15305a";
+  ctx.lineWidth=2;
+
+  ctx.beginPath();
+  ctx.moveTo(0,-38);
+  ctx.lineTo(22,-6);
+  ctx.lineTo(0,26);
+  ctx.lineTo(-22,-6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // taglio centrale
+  ctx.strokeStyle="rgba(255,255,255,0.5)";
+  ctx.beginPath();
+  ctx.moveTo(0,-38);
+  ctx.lineTo(0,26);
+  ctx.stroke();
+
+  // alone
+  const halo = ctx.createRadialGradient(0,0,0,0,0,40);
+  halo.addColorStop(0,"rgba(164,220,255,0.8)");
+  halo.addColorStop(1,"rgba(164,220,255,0)");
+  ctx.globalAlpha=0.65;
+  ctx.fillStyle=halo;
+  ctx.beginPath();
+  ctx.arc(0,0,40,0,Math.PI*2);
+  ctx.fill();
+
   ctx.restore();
 
-  // hp bar while alive
-  if(c.alive){
-    const ratio=clamp(c.hp/c.max,0,1);
-    const w=80,h=8;
-    ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(c.x-w/2,c.y-40,w,h);
-    const hpGrad=ctx.createLinearGradient(c.x-w/2,0,c.x+w/2,0);
-    hpGrad.addColorStop(0,'#6be6ff'); hpGrad.addColorStop(1,'#3b82f6');
-    ctx.fillStyle=hpGrad; ctx.fillRect(c.x-w/2,c.y-40,w*ratio,h);
-  } else if(c.owner==='P'){
-    // small icon to show that the player controls it
-    ctx.font='700 12px system-ui';
-    ctx.textAlign='center'; ctx.fillStyle='#7dd3fc';
-    ctx.fillText('Bonus mana tuo', c.x, c.y-42);
-  }
-}
-function drawUnit(u){
-  ctx.save(); ctx.globalAlpha=.18; ctx.fillStyle=(u.team==='P')?'#7fb6ff':'#ff9b9b';
-  ctx.beginPath(); ctx.ellipse(u.x-u.dir*10, u.y+10, 18,6,0,0,Math.PI*2); ctx.fill(); ctx.restore();
-  softShadow(u.x,u.y+8,16,6,0.25);
-  const edge=(u.team==='P')?'#0b4ea2':'#9b1c1c';
-  const core=(u.team==='P')?'#2f80ed':'#eb5757';
-  if(u.type==='tank'){
-    ctx.fillStyle='#3a4652'; ctx.fillRect(u.x-24,u.y-16,48,8); ctx.fillRect(u.x-24,u.y+8,48,8);
-    ctx.fillStyle='#202830'; for(let i=-20;i<=20;i+=10){ctx.beginPath();ctx.arc(u.x+i,u.y-12,3,0,Math.PI*2);ctx.fill();ctx.arc(u.x+i,u.y+12,3,0,Math.PI*2);ctx.fill();}
-    const grd=ctx.createLinearGradient(u.x-22,u.y-14,u.x+22,u.y+14);
-    grd.addColorStop(0,'#96a0aa'); grd.addColorStop(.5,'#cbd5df'); grd.addColorStop(1,'#8d98a3');
-    ctx.fillStyle=grd; ctx.fillRect(u.x-22,u.y-12,44,24);
-    ctx.strokeStyle='#46535f'; ctx.lineWidth=2; ctx.strokeRect(u.x-22,u.y-12,44,24);
-    ctx.fillStyle='#b9c4cf'; ctx.beginPath(); ctx.arc(u.x,u.y,10,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='#495663'; ctx.stroke();
-    ctx.fillStyle='#2a3440'; ctx.fillRect(u.x-2,u.y-18,4,16);
-  } else if(u.type==='scout'){
-    const g=ctx.createRadialGradient(u.x-4,u.y-4,2,u.x,u.y,14);
-    g.addColorStop(0,'#ffffff'); g.addColorStop(.5,'#92b9ff'); g.addColorStop(1,core);
-    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(u.x,u.y,13,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.arc(u.x-5,u.y-5,6,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle=edge; ctx.lineWidth=2; ctx.stroke();
-  } else if(u.type==='spark'){
-    const g=ctx.createRadialGradient(u.x,u.y,2,u.x,u.y,18);
-    g.addColorStop(0,'#fffacd'); g.addColorStop(1,(u.team==='P')?'#7fb6ff':'#ff9b9b');
-    ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(u.x-14,u.y+12); ctx.lineTo(u.x+14,u.y+12); ctx.lineTo(u.x,u.y-14); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle=edge; ctx.stroke();
-  } else {
-    ctx.fillStyle='#7cd37c'; ctx.beginPath(); ctx.arc(u.x,u.y,12,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='#2d7a2d'; ctx.stroke();
-    ctx.fillStyle='#2d7a2d'; ctx.fillRect(u.x-2,u.y-8,4,16); ctx.fillRect(u.x-8,u.y-2,16,4);
-  }
-  const ratio=clamp(u.hp/u.maxhp,0,1);
-  ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(u.x-12,u.y-22,24,5);
-  const g2=ctx.createLinearGradient(u.x-12,0,u.x+12,0); g2.addColorStop(0,'#7af07a'); g2.addColorStop(1,'#40c15b');
-  ctx.fillStyle=g2; ctx.fillRect(u.x-12,u.y-22,24*ratio,5);
-}
-function drawProjectiles(){
-  for(const p of state.projectiles){
-    ctx.save(); ctx.globalAlpha=.3;
-    const trail=ctx.createLinearGradient(p.x - p.vx*0.02, p.y - p.vy*0.02, p.x, p.y);
-    trail.addColorStop(0,'rgba(255,255,255,0)'); trail.addColorStop(1,p.colorB);
-    ctx.strokeStyle=trail; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(p.x-p.vx*0.02,p.y-p.vy*0.02); ctx.lineTo(p.x,p.y); ctx.stroke(); ctx.restore();
-    const glow=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,8);
-    glow.addColorStop(0,p.colorA); glow.addColorStop(1,'rgba(255,255,255,0)');
-    ctx.save(); ctx.globalAlpha=.9; ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); ctx.restore();
-    ctx.fillStyle=p.colorB; ctx.beginPath(); ctx.arc(p.x,p.y,2.2,0,Math.PI*2); ctx.fill();
-  }
-}
-function drawCrowns(){
-  ctx.fillStyle='#0f1115aa'; ctx.fillRect(0,0,W,22);
-  ctx.font='bold 14px system-ui'; ctx.textAlign='left'; ctx.fillStyle='#ffd966'; ctx.fillText('🔱 '+state.crowns.you,10,16);
-  ctx.textAlign='right'; ctx.fillText(state.crowns.enemy+' 🔱',W-10,16);
+  // barra HP
+  const ratio = clamp(c.hp/c.max,0,1);
+  const barW=90, barH=8;
+  ctx.fillStyle="rgba(0,0,0,0.60)";
+  ctx.fillRect(c.x-barW/2,c.y-52,barW,barH);
+  const hpGrad = ctx.createLinearGradient(c.x-barW/2,0,c.x+barW/2,0);
+  hpGrad.addColorStop(0,"#6aedff");
+  hpGrad.addColorStop(1,"#36a5ff");
+  ctx.fillStyle=hpGrad;
+  ctx.fillRect(c.x-barW/2,c.y-52,barW*ratio,barH);
+
+  // testo
+  ctx.font="12px system-ui";
+  ctx.fillStyle="#e0f4ff";
+  ctx.textAlign="center";
+  ctx.fillText("Cristallo del Mana", c.x, c.y-60);
 }
 
-/* UI */
-const cards=[
-  {label:'Scout (3)', type:'scout',  cost:3},
-  {label:'Spark (2)', type:'spark',  cost:2},
-  {label:'Tank (4)',  type:'tank',   cost:4},
-  {label:'Healer (3)',type:'healer', cost:3},
-  {label:'Riavvia',   type:'restart',cost:0},
-];
-const cardRects=[];
-function drawManaBar(){
-  const x=24,y=FIELD_H+12,w=W-48,h=14;
-  const m=state.manaP,M=state.manaMax;
-  ctx.fillStyle='#0a0d12'; ctx.fillRect(x-6,y-4,w+12,h+8);
-  ctx.fillStyle='#1e293b'; ctx.fillRect(x,y,w,h);
-  const g=ctx.createLinearGradient(x,0,x+w,0); g.addColorStop(0,'#6fb0ff'); g.addColorStop(1,'#2e79ff');
-  ctx.fillStyle=g; ctx.fillRect(x, y, w*(m/M), h);
-  ctx.fillStyle='#cfe3ff'; ctx.font='bold 12px system-ui'; ctx.textAlign='left';
-  ctx.fillText('Mana: '+Math.floor(m)+' / '+M, x, y-6);
+function drawUnit(u) {
+  if (u.hp<=0) return;
+  softShadow(u.x,u.y+10,18,8,0.30);
+
+  const teamColor = (u.team==="P")?"#2f6fe8":"#d34747";
+  const armorTop  = (u.team==="P")?"#e6edf7":"#f3d4d4";
+
+  // corpo (piccolo cavaliere realistico stilizzato)
+  ctx.save();
+  ctx.translate(u.x,u.y);
+  const wobble = Math.sin(u.animT*8)*1.5;
+  ctx.translate(0,wobble);
+
+  // armatura torace
+  ctx.fillStyle="#c0cad8";
+  ctx.strokeStyle="#6b768a";
+  ctx.lineWidth=1.8;
+  ctx.beginPath();
+  ctx.roundRect(-12,-16,24,24,6);
+  ctx.fill();
+  ctx.stroke();
+
+  // spalle
+  ctx.fillStyle=armorTop;
+  ctx.beginPath();
+  ctx.ellipse(0,-18,14,6,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.stroke();
+
+  // elmo
+  ctx.fillStyle=teamColor;
+  ctx.beginPath();
+  ctx.arc(0,-22,10,Math.PI,0);
+  ctx.fill();
+  ctx.stroke();
+
+  // visiera
+  ctx.fillStyle="#1e2635";
+  ctx.fillRect(-8,-23,16,5);
+
+  // simbolo tipo
+  if (u.type==="tank") {
+    ctx.fillStyle="#f5a623";
+    ctx.fillRect(-5,-7,10,10);
+  } else if (u.type==="spark") {
+    ctx.fillStyle="#ffe97a";
+    ctx.beginPath();
+    ctx.moveTo(0,-10); ctx.lineTo(6,2); ctx.lineTo(-6,2); ctx.closePath();
+    ctx.fill();
+  } else if (u.type==="healer") {
+    ctx.fillStyle="#6eed7c";
+    ctx.fillRect(-2,-10,4,12);
+    ctx.fillRect(-6,-4,12,4);
+  } else { // scout
+    ctx.fillStyle="#9fd3ff";
+    ctx.beginPath();
+    ctx.arc(0,-10,6,0,Math.PI*2); ctx.fill();
+  }
+
+  ctx.restore();
+
+  // barra HP
+  const ratio = clamp(u.hp/u.max,0,1);
+  ctx.fillStyle="rgba(0,0,0,0.55)";
+  ctx.fillRect(u.x-14,u.y-26,28,5);
+  const g = ctx.createLinearGradient(u.x-14,0,u.x+14,0);
+  g.addColorStop(0, ratio<0.35 ? "#ff6b6b" : "#6aed7b");
+  g.addColorStop(1, ratio<0.35 ? "#ff9b6b" : "#36c85b");
+  ctx.fillStyle=g;
+  ctx.fillRect(u.x-14,u.y-26,28*ratio,5);
 }
-function drawCards(){
-  const pad=16, gap=16, h=74, w=(W-pad*2-gap*4)/5;
+
+function drawProjectiles() {
+  for (const p of state.projectiles) {
+    const trail = ctx.createLinearGradient(p.x-p.vx*0.05,p.y-p.vy*0.05,p.x,p.y);
+    trail.addColorStop(0,"rgba(255,255,255,0)");
+    trail.addColorStop(1,p.colorB);
+    ctx.save();
+    ctx.globalAlpha=0.35;
+    ctx.strokeStyle=trail;
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.moveTo(p.x-p.vx*0.05,p.y-p.vy*0.05);
+    ctx.lineTo(p.x,p.y);
+    ctx.stroke();
+    ctx.restore();
+
+    const glow = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,8);
+    glow.addColorStop(0,p.colorA);
+    glow.addColorStop(1,"rgba(255,255,255,0)");
+    ctx.save();
+    ctx.globalAlpha=0.9;
+    ctx.fillStyle=glow;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,6,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle=p.colorB;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,2.4,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+function drawUI() {
+  // fascia nera in alto (testo / menu sintetico)
+  ctx.fillStyle="rgba(0,0,0,0.90)";
+  ctx.fillRect(0,0,LOGICAL_W,22);
+  ctx.font="12px system-ui";
+  ctx.textAlign="left";
+  ctx.textBaseline="middle";
+  ctx.fillStyle="#f0f4ff";
+  ctx.fillText("Menu → Gioca • In partita: tocca il campo per scegliere corsia, poi le carte",8,11);
+
+  // riga suggerimento cristallo
+  ctx.fillStyle="rgba(0,0,0,0.90)";
+  ctx.fillRect(0,22,LOGICAL_W,22);
+  ctx.textAlign="center";
+  ctx.fillStyle="#ffe07a";
+  ctx.fillText("La corsia centrale contiene il Cristallo del Mana: distruggerlo ti dà bonus mana.",LOGICAL_W/2,33);
+
+  // crowns
+  ctx.font="16px system-ui";
+  ctx.textAlign="left";
+  ctx.fillStyle="#ffd66b";
+  ctx.fillText("👑 "+state.crowns.you,8,LOGICAL_H-UI_H+18);
+  ctx.textAlign="right";
+  ctx.fillText(state.crowns.enemy+" 👑",LOGICAL_W-8,LOGICAL_H-UI_H+18);
+
+  // mana bar
+  const barX=20, barY=LOGICAL_H-UI_H+36, barW=LOGICAL_W-40, barH=16;
+  ctx.fillStyle="rgba(0,0,0,0.65)";
+  ctx.fillRect(barX,barY,barW,barH);
+  const manaRatio = clamp(state.mana/state.manaMax,0,1);
+  const manaGrad = ctx.createLinearGradient(barX,0,barX+barW,0);
+  manaGrad.addColorStop(0,"#56ccf2");
+  manaGrad.addColorStop(1,"#2f80ed");
+  ctx.fillStyle=manaGrad;
+  ctx.fillRect(barX,barY,barW*manaRatio,barH);
+  ctx.font="12px system-ui";
+  ctx.textAlign="left";
+  ctx.fillStyle="#e8f4ff";
+  ctx.fillText("Mana: "+state.mana.toFixed(0)+" / "+state.manaMax, barX+2, barY-4);
+
+  // carte
+  const cardsY = LOGICAL_H-UI_H+64;
+  const cardW = (LOGICAL_W-40)/CARDS.length - 6;
+  const cardH = 80;
   cardRects.length=0;
-  for(let i=0;i<5;i++){
-    const x=pad+i*(w+gap), y=FIELD_H+32;
-    ctx.fillStyle='#0e131a'; ctx.fillRect(x,y,w,h);
-    ctx.strokeStyle='#263241'; ctx.lineWidth=2; ctx.strokeRect(x+.5,y+.5,w-1,h-1);
-    const c=cards[i];
-    ctx.fillStyle='#dbe7ff'; ctx.font='600 14px system-ui'; ctx.textAlign='center';
-    ctx.fillText(c.label, x+w/2, y+18);
-    ctx.save(); ctx.translate(x+w/2, y+42);
-    const tt=(state.time||0); const s=1+0.08*Math.sin(tt*3+i*0.8); ctx.scale(s,s);
-    if(c.type==='scout'){ ctx.fillStyle='#7fb6ff'; ctx.beginPath(); ctx.arc(0,0,10,0,Math.PI*2); ctx.fill(); }
-    else if(c.type==='spark'){ ctx.fillStyle='#ffd089'; ctx.beginPath(); ctx.moveTo(-10,10); ctx.lineTo(10,10); ctx.lineTo(0,-10); ctx.closePath(); ctx.fill(); }
-    else if(c.type==='tank'){ ctx.fillStyle='#ffb36a'; ctx.fillRect(-10,-8,20,16); }
-    else if(c.type==='healer'){ ctx.fillStyle='#6be675'; ctx.fillRect(-3,-12,6,24); ctx.fillRect(-12,-3,24,6); }
-    else { ctx.fillStyle='#cfd6e0'; ctx.beginPath(); ctx.arc(0,0,10,0,Math.PI*2); ctx.fill(); }
-    ctx.restore();
-    cardRects.push({x,y,w,h,i});
-  }
-}
-function uiOverlay(){
-  drawCrowns();
-  drawManaBar();
-  drawCards();
-  if(notEnoughManaBlink>0){
-    const a=Math.min(1,notEnoughManaBlink/0.4);
-    ctx.save(); ctx.globalAlpha=a; ctx.fillStyle='#ffb36a';
-    ctx.font='700 18px system-ui'; ctx.textAlign='center';
-    ctx.fillText('Mana insufficiente!', W/2, FIELD_H+28); ctx.restore();
-  }
-  if(!state.playing){
-    const txt = state.crowns.you>state.crowns.enemy ? '🏆 Vittoria!' :
-                state.crowns.you<state.crowns.enemy ? 'Sconfitta' : 'Pareggio';
-    ctx.save(); ctx.globalAlpha=.94; ctx.fillStyle='rgba(0,0,0,.55)'; ctx.fillRect(40,FIELD_H/2-60,W-80,140);
-    ctx.fillStyle='#fff'; ctx.font='800 28px system-ui'; ctx.textAlign='center';
-    ctx.fillText(txt, W/2, FIELD_H/2); ctx.font='600 14px system-ui';
-    ctx.fillText('Tocca "Riavvia" per giocare ancora', W/2, FIELD_H/2+30);
-    ctx.restore();
-  }
-}
+  CARDS.forEach((card,i)=>{
+    const x = 20 + i*(cardW+6);
+    const y = cardsY;
+    const selected = (state.selectedCard===card.id);
 
-/* input */
-let hoveringCard=-1;
-canvas.addEventListener('pointermove', e=>{
-  const p=toLogical(e);
-  let best=0,bi=0;
-  for(let i=0;i<3;i++){ const d=Math.abs(COL_X[i]-p.x); if(i===0||d<best){best=d; bi=i;} }
-  selectedCol=bi;
-  hoveringCard=-1;
-  for(const r of cardRects){ if(p.x>=r.x && p.x<=r.x+r.w && p.y>=r.y && p.y<=r.y+r.h){ hoveringCard=r.i; break; } }
-});
-canvas.addEventListener('pointerdown', e=>{
-  const p=toLogical(e);
-  for(const r of cardRects){
-    if(p.x>=r.x && p.x<=r.x+r.w && p.y>=r.y && p.y<=r.y+r.h){
-      const c=cards[r.i];
-      if(c.type==='restart'){ location.reload(); return; }
-      if(state.manaP < c.cost){ notEnoughManaBlink=.6; return; }
-      state.manaP-=c.cost;
-      addUnit('P', selectedCol, c.type);
-      return;
+    // sfondo
+    const grad = ctx.createLinearGradient(x,y,x,y+cardH);
+    grad.addColorStop(0, selected ? "#283a5f" : "#151a24");
+    grad.addColorStop(1, selected ? "#111827" : "#0b0f17");
+    ctx.fillStyle=grad;
+    ctx.beginPath();
+    ctx.roundRect(x,y,cardW,cardH,10);
+    ctx.fill();
+
+    // bordo
+    ctx.strokeStyle = selected ? "#4f8cff" : "#222837";
+    ctx.lineWidth = selected ? 2.4 : 1.4;
+    ctx.stroke();
+
+    // tipo icona
+    ctx.save();
+    ctx.translate(x+cardW/2,y+26);
+    if (card.id==="scout") {
+      ctx.fillStyle="#9fd3ff";
+      ctx.beginPath(); ctx.arc(0,0,10,0,Math.PI*2); ctx.fill();
+    } else if (card.id==="spark") {
+      ctx.fillStyle="#ffe97a";
+      ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(12,8); ctx.lineTo(-12,8); ctx.closePath(); ctx.fill();
+    } else if (card.id==="tank") {
+      ctx.fillStyle="#f5a623";
+      ctx.beginPath(); ctx.roundRect(-12,-10,24,20,4); ctx.fill();
+    } else if (card.id==="healer") {
+      ctx.fillStyle="#6eed7c";
+      ctx.fillRect(-3,-12,6,24); ctx.fillRect(-12,-3,24,6);
+    } else { // restart
+      ctx.strokeStyle="#e5e7eb";
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.arc(0,0,10,Math.PI*0.4,Math.PI*1.8);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(8,-7); ctx.lineTo(13,-12); ctx.lineTo(13,-5); ctx.closePath();
+      ctx.fillStyle="#e5e7eb"; ctx.fill();
     }
-  }
-});
+    ctx.restore();
 
-/* loop */
-let lastTs=performance.now();
-function loop(t){
-  const now=t||performance.now(); const dt=Math.min(0.033,(now-lastTs)/1000); lastTs=now;
-  step(dt);
-  ctx.save(); ctx.fillStyle='#0b0e13'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.restore();
-  ctx.save(); ctx.translate(offX,offY); ctx.scale(scale,scale);
-  bg();
-  if(state.manaCrystal) drawCrystal(state.manaCrystal);
-  for(const t of state.enemyTowers) tower(t,false);
-  for(const t of state.playerTowers) tower(t,true);
-  for(const u of state.units) drawUnit(u);
+    // nome + costo
+    ctx.textAlign="center";
+    ctx.fillStyle="#e5e7eb";
+    ctx.font="13px system-ui";
+    ctx.fillText(card.label, x+cardW/2, y+cardH-28);
+    ctx.font="11px system-ui";
+    if (card.id!=="restart") {
+      ctx.fillStyle = state.mana>=card.cost ? "#9be8ff" : "#fca5a5";
+      ctx.fillText(card.cost.toString(), x+cardW/2, y+cardH-10);
+    } else {
+      ctx.fillStyle="#9be8ff";
+      ctx.fillText("↺", x+cardW/2, y+cardH-10);
+    }
+
+    cardRects.push({id:card.id,x,y,w:cardW,h:cardH});
+  });
+
+  // messaggio fine partita
+  if (!state.running) {
+    ctx.fillStyle="rgba(0,0,0,0.65)";
+    ctx.fillRect(40,FIELD_H/2-60,LOGICAL_W-80,120);
+    ctx.textAlign="center";
+    ctx.fillStyle="#fff";
+    ctx.font="bold 26px system-ui";
+    const you = state.crowns.you;
+    const enemy = state.crowns.enemy;
+    let msg = "Pareggio";
+    if (you>enemy) msg="Vittoria!";
+    else if (enemy>you) msg="Sconfitta";
+    ctx.fillText(msg, LOGICAL_W/2, FIELD_H/2-10);
+    ctx.font="14px system-ui";
+    ctx.fillStyle="#e5e7eb";
+    ctx.fillText("Tocca 'Riavvia' per giocare ancora", LOGICAL_W/2, FIELD_H/2+22);
+  }
+
+  // lampeggio mana insufficiente
+  if (state.notEnoughBlink>0) {
+    ctx.fillStyle="rgba(255,80,80,0.18)";
+    ctx.fillRect(0,FIELD_H,LOGICAL_W,LOGICAL_H-FIELD_H);
+  }
+
+  // floating text
+  state.floats.forEach(f=>{
+    ctx.globalAlpha = 1 - f.t/f.life;
+    ctx.fillStyle=f.color;
+    ctx.textAlign="center";
+    ctx.font="13px system-ui";
+    ctx.fillText(f.text,f.x,f.y);
+    ctx.globalAlpha = 1;
+  });
+
+  // particles
+  state.particles.forEach(p=>{
+    const alpha = 1 - p.t/p.life;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle=p.color;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,2,0,Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+}
+
+/* ============================================================
+   11. MAIN LOOP
+   ============================================================ */
+let lastTime = performance.now();
+function loop(now) {
+  const dt = Math.min(0.033, (now-lastTime)/1000);
+  lastTime = now;
+
+  update(dt);
+
+  // clear & transform
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.setTransform(scale,0,0,scale,offX,offY);
+
+  drawBackground();
+  state.playerTowers.forEach(t=>drawTower(t,true));
+  state.enemyTowers.forEach(t=>drawTower(t,false));
+  drawCrystal();
+  state.units.forEach(drawUnit);
   drawProjectiles();
-  for(const p of state.particles){ ctx.globalAlpha=1-Math.min(1,p.t/p.life); ctx.fillStyle=p.c||'#fff'; ctx.beginPath(); ctx.arc(p.x,p.y,2,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1; }
-  ctx.font='700 12px system-ui'; ctx.textAlign='center';
-  for(const f of state.floats){ ctx.globalAlpha=1-Math.min(1,f.t/1); ctx.fillStyle=f.c||'#fff'; ctx.fillText(f.v,f.x,f.y); ctx.globalAlpha=1; }
-  uiOverlay();
-  ctx.restore();
-  if(notEnoughManaBlink>0) notEnoughManaBlink-=dt;
+  drawUI();
+
   requestAnimationFrame(loop);
 }
+resetGame();
 requestAnimationFrame(loop);
 
-/* PWA */
-let deferredPrompt;
-window.addEventListener('beforeinstallprompt', (e)=>{
-  e.preventDefault(); deferredPrompt=e;
-  const btn=document.getElementById('install'); btn.style.display='block';
-  btn.onclick=async()=>{ btn.style.display='none'; deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt=null; };
-});
-if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').catch(()=>{})); }
+/* ============================================================
+   12. INPUT TOUCH / MOUSE
+   ============================================================ */
+function onPointerDown(evt) {
+  const p = ("touches" in evt) ? evt.touches[0] : evt;
+  const pos = toLogical(p);
+  if (pos.y < 0 || pos.y > LOGICAL_H) return;
+  if (pos.y <= FIELD_H) {
+    // seleziona corsia
+    let best = 0, bestDist = Infinity;
+    LANES_X.forEach((x,i)=>{
+      const d = Math.abs(pos.x-x);
+      if (d<bestDist){bestDist=d; best=i;}
+    });
+    state.selectedLane = best;
+  } else {
+    // clic su carta
+    for (const r of cardRects) {
+      if (pos.x>=r.x && pos.x<=r.x+r.w && pos.y>=r.y && pos.y<=r.y+r.h) {
+        if (r.id==="restart") {
+          resetGame();
+          return;
+        }
+        state.selectedCard = r.id;
+        // subito prova piazzare
+        placeSelectedCard();
+        return;
+      }
+    }
+  }
+}
+
+function placeSelectedCard() {
+  const id = state.selectedCard;
+  if (!id) return;
+  const card = CARDS.find(c=>c.id===id);
+  if (!card) return;
+  const cost = card.cost;
+  if (state.mana < cost) {
+    state.notEnoughBlink = 1;
+    return;
+  }
+  state.mana -= cost;
+  if (id==="scout" || id==="spark" || id==="tank" || id==="healer") {
+    spawnUnit("P",state.selectedLane,id);
+  }
+}
+
+canvas.addEventListener("mousedown", onPointerDown);
+canvas.addEventListener("touchstart", e=>{onPointerDown(e); e.preventDefault();},{passive:false});
+
+/* ============================================================
+   13. FUTURO MULTIGIOCATORE (STRUTTURA)
+   ============================================================ */
+/*
+ Per giocare in due con invito, il passo successivo sarà:
+  - aggiungere un backend (Firebase Realtime, Supabase o server Node.js con WebSocket)
+  - creare un codice stanza / link (es. ?room=ABC123)
+  - sincronizzare:
+      - posizionamento delle unità
+      - stato delle torri, cristallo, mana
+  - qui nel client sarà sufficiente sostituire le funzioni spawnUnit() e resetGame()
+    con versioni che inviano/recepiscono eventi dal server.
+ Questo file è già strutturato per poterlo fare senza cambiare la grafica.
+*/
 </script>
 </body>
 </html>
