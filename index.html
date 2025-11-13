@@ -1,674 +1,758 @@
 <!doctype html>
 <html lang="it">
 <head>
-<meta charset="utf-8">
-<title>Arena Duel – Proto v1</title>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#0b1020">
-<style>
-  html,body{
-    margin:0;
-    padding:0;
-    height:100%;
-    background:#05070b;
-    color:#fff;
-    font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-    -webkit-user-select:none;
-    user-select:none;
-    overscroll-behavior:none;
-  }
-  #game{
-    position:fixed;
-    inset:0;
-    width:100vw;
-    height:100vh;
-    display:block;
-    background:#05070b;
-    touch-action:none;
-    -webkit-tap-highlight-color:transparent;
-  }
-  .hint{
-    position:fixed;
-    left:50%;
-    bottom:10px;
-    transform:translateX(-50%);
-    padding:6px 12px;
-    border-radius:999px;
-    background:rgba(0,0,0,.8);
-    border:1px solid rgba(90,120,255,.5);
-    font-size:12px;
-  }
-</style>
+  <meta charset="utf-8">
+  <title>Arena Duel – Proto pulito</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <meta name="theme-color" content="#05070b">
+  <link rel="manifest" href="manifest.webmanifest">
+  <style>
+    html,body{
+      margin:0;
+      padding:0;
+      height:100%;
+      background:#05070b;
+      color:#fff;
+      font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      overscroll-behavior:none;
+      touch-action:none;
+    }
+    body{
+      display:flex;
+      align-items:stretch;
+      justify-content:stretch;
+    }
+    canvas{
+      flex:1;
+      display:block;
+      width:100%;
+      height:100%;
+      touch-action:none;
+      -webkit-tap-highlight-color:transparent;
+    }
+  </style>
 </head>
 <body>
 <canvas id="game"></canvas>
-<div class="hint">Suggerimento: aggiungi il gioco alla Home per usarlo come app.</div>
 <script>
-// ----- costanti logiche -----
-const W = 720;
-const H = 1280;
-const UI_H = 180;
-const FIELD_H = H - UI_H;
-const LANES_X = [W*0.2, W*0.5, W*0.8];
+// ===================== Costanti logiche =====================
+const LOGICAL_W = 720;
+const LOGICAL_H = 1280;
+const UI_H      = 180;
+const FIELD_H   = LOGICAL_H - UI_H;
+const LANES_X   = [LOGICAL_W * 0.2, LOGICAL_W * 0.5, LOGICAL_W * 0.8];
+const RIVER_Y   = FIELD_H * 0.5;
 
-// canvas
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d', {alpha:false});
-let scale=1, offX=0, offY=0;
+const ctx    = canvas.getContext('2d', { alpha:false });
 
-function resize(){
-  const r = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width  = Math.max(1, Math.round(r.width*dpr));
-  canvas.height = Math.max(1, Math.round(r.height*dpr));
-  scale = Math.min(canvas.width/W, canvas.height/H);
-  offX  = Math.floor((canvas.width  - W*scale)/2);
-  offY  = Math.floor((canvas.height - H*scale)/2);
+let scale = 1, offX = 0, offY = 0;
+
+// ===================== Resize & mapping =====================
+function resize() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr  = window.devicePixelRatio || 1;
+  canvas.width  = Math.max(1, Math.round(rect.width  * dpr));
+  canvas.height = Math.max(1, Math.round(rect.height * dpr));
+
+  scale = Math.min(canvas.width / LOGICAL_W, canvas.height / LOGICAL_H);
+  offX  = Math.round((canvas.width  - LOGICAL_W * scale) / 2);
+  offY  = Math.round((canvas.height - LOGICAL_H * scale) / 2);
 }
-window.addEventListener('resize',resize);
-window.addEventListener('orientationchange',resize);
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', resize);
 resize();
 
-function toLogical(clientX,clientY){
-  const r = canvas.getBoundingClientRect();
-  const px = (clientX-r.left) * (canvas.width/r.width);
-  const py = (clientY-r.top ) * (canvas.height/r.height);
-  return {x:(px-offX)/scale, y:(py-offY)/scale};
+function toGameCoords(clientX, clientY){
+  const rect = canvas.getBoundingClientRect();
+  const px = (clientX - rect.left) * (canvas.width  / rect.width);
+  const py = (clientY - rect.top)  * (canvas.height / rect.height);
+  return {
+    x: (px - offX) / scale,
+    y: (py - offY) / scale
+  };
 }
-function clamp(v,a,b){return v<a?a:(v>b?b:v);}
 
-// stato
+// ===================== Stato di gioco =====================
+const CARDS = [
+  { key:'scout',  label:'Scout',  cost:3, color:'#4fc3f7' },
+  { key:'spark',  label:'Spark',  cost:2, color:'#ffe082' },
+  { key:'tank',   label:'Tank',   cost:4, color:'#ffab91' },
+  { key:'healer', label:'Healer', cost:3, color:'#a5d6a7' },
+  { key:'reset',  label:'Riavvia',cost:0, color:'#cfd8dc' }
+];
+
+let cardRects = [];
 let selectedLane = 1;
+let manaFlash = 0;
+
 const state = {
-  running:true,
-  time:0,
-  manaP:5,
-  manaE:5,
-  manaMax:10,
-  manaRegen:0.02,
-  towersP:[],
-  towersE:[],
-  units:[],
-  bullets:[],
-  crystal:null,
-  result:null,
-  wins:0
+  playing: true,
+  time: 0,
+  mana: 5,
+  manaMax: 10,
+  manaRegen: 1.2, // al secondo
+  enemyMana: 5,
+  enemyManaRegen: 1.0,
+  crownsYou: 0,
+  crownsEnemy: 0,
+  playerTowers: [
+    { x: LOGICAL_W*0.25, y: FIELD_H-110, hp:100, maxHp:100 },
+    { x: LOGICAL_W*0.75, y: FIELD_H-110, hp:100, maxHp:100 }
+  ],
+  enemyTowers: [
+    { x: LOGICAL_W*0.25, y: 110, hp:100, maxHp:100 },
+    { x: LOGICAL_W*0.75, y: 110, hp:100, maxHp:100 }
+  ],
+  units: [],     // {team:'player'|'enemy', lane, x,y,dir, type, hp,maxHp,atk,range,spd,cooldown,rate}
+  projectiles: [], // {team, x,y,vx,vy,damage,heal,life,colorA,colorB}
+  manaCrystal: {
+    x: LOGICAL_W * 0.5,
+    y: RIVER_Y,
+    hp: 40,
+    maxHp: 40,
+    alive: true,
+    lastHitBy: null // 'player' o 'enemy'
+  }
 };
 
-function makeTower(x,y,team){
-  return {x,y,team,hp:120,maxHp:120};
+// ===================== Utilità =====================
+function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+function spawnUnit(team, laneIndex, key){
+  const laneX = LANES_X[laneIndex];
+  const dir   = (team === 'player') ? -1 : 1;
+  const y0    = (team === 'player') ? (FIELD_H - 160) : 160;
+
+  const base = {
+    team,
+    lane: laneIndex,
+    x: laneX,
+    y: y0,
+    dir,
+    cooldown: 0,
+    rate: 1.0,
+    range: 32,
+    hp: 20,
+    maxHp: 20,
+    atk: 4,
+    spd: 60,
+    type: key
+  };
+
+  if(key === 'scout'){
+    base.spd = 80; base.hp = base.maxHp = 18; base.atk = 3; base.range = 26; base.rate = 0.7;
+  }else if(key === 'spark'){
+    base.spd = 55; base.hp = base.maxHp = 14; base.atk = 7; base.range = 110; base.rate = 0.9;
+  }else if(key === 'tank'){
+    base.spd = 40; base.hp = base.maxHp = 60; base.atk = 6; base.range = 30; base.rate = 1.2;
+  }else if(key === 'healer'){
+    base.spd = 60; base.hp = base.maxHp = 18; base.atk = -6; base.range = 90; base.rate = 1.0;
+  }
+
+  state.units.push(base);
 }
 
-function resetGame(){
-  state.running=true;
-  state.time=0;
-  state.manaP=5;
-  state.manaE=5;
-  state.manaMax=10;
-  state.towersP=[
-    makeTower(W*0.25, FIELD_H-80, 'P'),
-    makeTower(W*0.75, FIELD_H-80, 'P')
-  ];
-  state.towersE=[
-    makeTower(W*0.25, 80, 'E'),
-    makeTower(W*0.75, 80, 'E')
-  ];
-  state.units=[];
-  state.bullets=[];
-  state.crystal={x:W*0.5, y:FIELD_H/2, hp:80, maxHp:80, alive:true};
-  state.result=null;
-}
-resetGame();
-
-// carte
-const cards=[
-  {key:'scout', name:'Scout', cost:3},
-  {key:'spark', name:'Spark', cost:2},
-  {key:'tank',  name:'Tank',  cost:4},
-  {key:'healer',name:'Healer',cost:3},
-  {key:'restart',name:'Riavvia',cost:0}
-];
-let cardRects=[];
-let notEnoughMana=0;
-
-// audio minimale
-let ac=null;
-function beep(type){
-  try{
-    ac = ac || new (window.AudioContext||window.webkitAudioContext)();
-    const o = ac.createOscillator();
-    const g = ac.createGain();
-    let f=440,d=0.08;
-    if(type==='place'){f=660;d=0.06;}
-    if(type==='hit'){f=220;d=0.04;}
-    if(type==='win'){f=880;d=0.25;}
-    if(type==='lose'){f=160;d=0.25;}
-    o.type='square';
-    o.frequency.value=f;
-    g.gain.value=0.05;
-    o.connect(g); g.connect(ac.destination);
-    const t=ac.currentTime;
-    o.start(t);
-    g.gain.exponentialRampToValueAtTime(0.0001,t+d);
-    o.stop(t+d);
-  }catch(e){}
+function launchProjectile(from, target, opts){
+  const dx = target.x - from.x;
+  const dy = target.y - from.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const speed = opts.speed || 260;
+  state.projectiles.push({
+    team: opts.team,
+    x: from.x,
+    y: from.y,
+    vx: dx / dist * speed,
+    vy: dy / dist * speed,
+    damage: opts.damage || 0,
+    heal: opts.heal || 0,
+    life: 1.2,
+    colorA: opts.colorA || '#ffffff',
+    colorB: opts.colorB || '#81d4fa'
+  });
 }
 
-function makeUnit(team,lane,kind){
-  const x = LANES_X[lane];
-  const y = team==='P' ? FIELD_H-130 : 130;
-  const dir = team==='P' ? -1 : 1;
-  const u={team,lane,kind,x,y,dir,cd:0,hp:40,maxHp:40,atk:10,range:26,speed:60};
-  if(kind==='scout'){u.speed=90;u.hp=26;u.maxHp=26;u.atk=9;u.range=24;}
-  else if(kind==='tank'){u.speed=40;u.hp=80;u.maxHp=80;u.atk=12;u.range=26;}
-  else if(kind==='spark'){u.speed=55;u.hp=30;u.maxHp=30;u.atk=10;u.range=120;}
-  else if(kind==='healer'){u.speed=60;u.hp=30;u.maxHp=30;u.atk=-8;u.range=100;}
-  return u;
+// ===================== Input =====================
+function onPointerStart(ev){
+  ev.preventDefault();
+  const touch = ev.touches ? ev.touches[0] : ev;
+  const pos = toGameCoords(touch.clientX, touch.clientY);
+  if(isNaN(pos.x) || isNaN(pos.y)) return;
+
+  if(pos.y < 0 || pos.y > LOGICAL_H) return;
+
+  if(pos.y < FIELD_H){
+    // Seleziona corsia
+    let best = 0, bestD = Infinity;
+    for(let i=0;i<LANES_X.length;i++){
+      const d = Math.abs(pos.x - LANES_X[i]);
+      if(d < bestD){ bestD = d; best = i; }
+    }
+    selectedLane = best;
+  } else {
+    // Tocca le carte
+    for(let i=0;i<cardRects.length;i++){
+      const r = cardRects[i];
+      if(pos.x >= r.x && pos.x <= r.x+r.w && pos.y >= r.y && pos.y <= r.y+r.h){
+        handleCardClick(i);
+        break;
+      }
+    }
+  }
 }
 
-function spawnP(kind){
-  const card = cards.find(c=>c.key===kind);
+canvas.addEventListener('mousedown', onPointerStart);
+canvas.addEventListener('touchstart', onPointerStart, { passive:false });
+
+function handleCardClick(index){
+  const card = CARDS[index];
   if(!card) return;
-  if(kind==='restart'){ resetGame(); return; }
-  if(state.manaP < card.cost){ notEnoughMana=0.6; return; }
-  state.manaP -= card.cost;
-  state.units.push(makeUnit('P',selectedLane,kind));
-  beep('place');
-}
-function spawnE(kind){
-  state.units.push(makeUnit('E',Math.floor(Math.random()*3),kind));
+
+  if(card.key === 'reset'){
+    resetMatch();
+    return;
+  }
+
+  if(!state.playing) return;
+
+  if(state.mana < card.cost){
+    manaFlash = 0.4;
+    return;
+  }
+
+  state.mana -= card.cost;
+  spawnUnit('player', selectedLane, card.key);
 }
 
-let aiTimer=2;
-function aiStep(dt){
-  if(!state.running) return;
-  aiTimer-=dt;
-  if(aiTimer>0) return;
-  aiTimer=1.5+Math.random()*1.5;
-  const mana=Math.floor(state.manaE);
-  const pool=[];
-  if(mana>=2) pool.push('spark');
-  if(mana>=3) pool.push('scout','healer');
-  if(mana>=4) pool.push('tank');
-  if(!pool.length) return;
-  const kind=pool[Math.floor(Math.random()*pool.length)];
-  const cost=cards.find(c=>c.key===kind).cost;
-  state.manaE=Math.max(0,state.manaE-cost);
-  spawnE(kind);
+// ===================== AI semplice =====================
+let aiTimer = 2.0;
+function enemyAI(dt){
+  if(!state.playing) return;
+  aiTimer -= dt;
+  if(aiTimer > 0) return;
+  aiTimer = 1.6 + Math.random()*1.6;
+
+  // sceglie una carta che può permettersi
+  const affordable = CARDS.filter(c => c.key!=='reset' && state.enemyMana >= c.cost);
+  if(!affordable.length) return;
+  const card = affordable[Math.floor(Math.random()*affordable.length)];
+  const lane = Math.floor(Math.random()*LANES_X.length);
+  state.enemyMana -= card.cost;
+  spawnUnit('enemy', lane, card.key);
 }
 
+// ===================== Update logica =====================
 function update(dt){
-  state.time+=dt;
-  if(state.running){
-    state.manaP = clamp(state.manaP + state.manaRegen*dt*60, 0, state.manaMax);
-    state.manaE = clamp(state.manaE + state.manaRegen*dt*60, 0, state.manaMax);
-    aiStep(dt);
+  state.time += dt;
+
+  if(state.playing){
+    state.mana      = clamp(state.mana      + state.manaRegen      * dt, 0, state.manaMax);
+    state.enemyMana = clamp(state.enemyMana + state.enemyManaRegen * dt, 0, state.manaMax);
+    enemyAI(dt);
   }
-  notEnoughMana=Math.max(0,notEnoughMana-dt);
 
-  // units
-  for(const u of state.units){
-    if(!state.running) break;
-    u.cd-=dt;
-    const enemyTeam = u.team==='P'?'E':'P';
-    const foes  = state.units.filter(v=>v.team===enemyTeam && v.lane===u.lane);
-    const towers = (enemyTeam==='E'?state.towersE:state.towersP);
+  if(manaFlash > 0) manaFlash -= dt;
 
-    if(u.kind==='healer'){
-      let best=null,bestGap=0;
-      const allies=state.units.filter(v=>v.team===u.team && v.lane===u.lane);
-      for(const a of allies){
-        const gap=a.maxHp-a.hp;
-        const d=Math.hypot(a.x-u.x,a.y-u.y);
-        if(gap>bestGap && d<=u.range){bestGap=gap;best=a;}
+  // Unità
+  const units = state.units;
+  const pTowers = state.playerTowers;
+  const eTowers = state.enemyTowers;
+
+  for(const u of units){
+    if(!state.playing) continue;
+    u.cooldown -= dt;
+
+    const enemyTeam = (u.team === 'player') ? 'enemy' : 'player';
+    const forwardSign = (u.team === 'player') ? -1 : 1;
+
+    // possibili bersagli sulla stessa corsia: altre unità + torri nemiche + cristallo centrale
+    const foes = [];
+    for(const v of units){
+      if(v.team !== enemyTeam) continue;
+      if(v.lane !== u.lane) continue;
+      foes.push(v);
+    }
+    const towers = (enemyTeam === 'enemy' ? eTowers : pTowers);
+    for(const t of towers){
+      foes.push(t);
+    }
+    if(state.manaCrystal.alive && u.lane === 1){
+      foes.push(state.manaCrystal);
+    }
+
+    // trova bersaglio più vicino in avanti
+    let target = null;
+    let bestDist = Infinity;
+    for(const f of foes){
+      const dy = (f.y - u.y) * forwardSign;
+      if(dy <= -8) continue; // dietro di lui
+      const dx = Math.abs(f.x - u.x);
+      const dist = Math.hypot(dx, dy);
+      if(dist < bestDist){
+        bestDist = dist;
+        target = f;
       }
-      if(!best){
-        const allyT = (u.team==='P'?state.towersP:state.towersE);
-        for(const t of allyT){
-          const gap=t.maxHp-t.hp;
-          const d=Math.hypot(t.x-u.x,t.y-u.y);
-          if(gap>bestGap && d<=u.range){bestGap=gap;best=t;}
+    }
+
+    if(target && bestDist <= u.range){
+      // attacco
+      if(u.cooldown <= 0){
+        u.cooldown = u.rate;
+        if(u.type === 'spark' || u.type === 'healer'){
+          // attacco a distanza / cura
+          const heal = u.atk < 0 ? -u.atk : 0;
+          const dmg  = u.atk > 0 ?  u.atk : 0;
+          launchProjectile(u, target, {
+            team: u.team,
+            damage: dmg,
+            heal: heal,
+            colorA: (heal>0?'#a5d6a7':'#fff59d'),
+            colorB: (u.team==='player'?'#81d4fa':'#ffab91'),
+            speed: 320
+          });
+        } else {
+          // melee: danno diretto
+          applyDamage(target, u.atk, u.team);
         }
       }
-      if(best && u.cd<=0){
-        u.cd=0.9;
-        best.hp = clamp(best.hp + Math.abs(u.atk),0,best.maxHp);
+    } else if(state.playing) {
+      // movimento
+      u.y += u.spd * u.dir * dt;
+    }
+  }
+
+  // proiettili
+  for(const p of state.projectiles){
+    p.life -= dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if(p.life <= 0) continue;
+
+    const enemyTeam = (p.team === 'player') ? 'enemy' : 'player';
+
+    // collisione con unità
+    let hit = null;
+    for(const u of units){
+      if((p.heal > 0 && u.team === p.team) || (p.damage > 0 && u.team === enemyTeam)){
+        const d = Math.hypot(u.x - p.x, u.y - p.y);
+        if(d < 18){
+          hit = u; break;
+        }
+      }
+    }
+    if(!hit){
+      // collisione con torri / cristallo
+      const towerList = (p.damage > 0)
+        ? (enemyTeam === 'enemy' ? eTowers : pTowers)
+        : (p.team === 'player' ? pTowers : eTowers);
+      for(const t of towerList){
+        const d = Math.hypot(t.x - p.x, t.y - p.y);
+        if(d < 24){ hit = t; break; }
+      }
+      if(!hit && state.manaCrystal.alive){
+        const d = Math.hypot(state.manaCrystal.x - p.x, state.manaCrystal.y - p.y);
+        if(d < 28){ hit = state.manaCrystal; }
+      }
+    }
+    if(hit){
+      if(p.heal > 0){
+        hit.hp = clamp(hit.hp + p.heal, 0, hit.maxHp || 100);
+      }
+      if(p.damage > 0){
+        applyDamage(hit, p.damage, p.team);
+      }
+      p.life = 0;
+    }
+  }
+
+  // pulizia
+  state.projectiles = state.projectiles.filter(p => p.life > 0);
+  state.units = state.units.filter(u => u.hp > 0 && u.y > 20 && u.y < FIELD_H - 20);
+
+  // vittoria/sconfitta
+  const pAlive = state.playerTowers.filter(t=>t.hp>0).length;
+  const eAlive = state.enemyTowers.filter(t=>t.hp>0).length;
+  state.crownsYou   = 2 - eAlive;
+  state.crownsEnemy = 2 - pAlive;
+
+  if(state.playing){
+    if(eAlive === 0){
+      state.playing = false;
+      endBanner = 'Vittoria!';
+    }else if(pAlive === 0){
+      state.playing = false;
+      endBanner = 'Sconfitta';
+    }
+  }
+}
+
+// ===================== Danno =====================
+function applyDamage(target, dmg, fromTeam){
+  if(!target || dmg <= 0) return;
+  target.hp = (target.hp || target.maxHp) - dmg;
+  if(target === state.manaCrystal){
+    state.manaCrystal.lastHitBy = fromTeam;
+    if(target.hp <= 0 && target.alive){
+      target.alive = false;
+      // bonus mana
+      if(fromTeam === 'player'){
+        state.mana = clamp(state.mana + 5, 0, state.manaMax);
       }else{
-        u.y += u.dir*u.speed*dt;
-      }
-    }else if(u.kind==='spark'){
-      let target=null, bestDist=1e9;
-      for(const f of foes){
-        const d=Math.hypot(f.x-u.x,f.y-u.y);
-        if(d<u.range && d<bestDist){bestDist=d;target=f;}
-      }
-      if(!target){
-        for(const t of towers){
-          const d=Math.hypot(t.x-u.x,t.y-u.y);
-          if(d<u.range && d<bestDist){bestDist=d;target=t;}
-        }
-      }
-      if(state.crystal && state.crystal.alive && !target){
-        const c=state.crystal;
-        const d=Math.hypot(c.x-u.x,c.y-u.y);
-        if(d<u.range) target=c;
-      }
-      if(target && u.cd<=0){
-        u.cd=0.9;
-        state.bullets.push({x:u.x,y:u.y,tx:target.x,ty:target.y,team:u.team,speed:260,dmg:Math.abs(u.atk)});
-      }else{
-        u.y += u.dir*u.speed*dt;
-      }
-    }else{
-      // melee
-      let target=null,bestDist=1e9;
-      for(const f of foes){
-        const d=Math.hypot(f.x-u.x,f.y-u.y);
-        if(d<26 && d<bestDist){bestDist=d;target=f;}
-      }
-      if(!target){
-        for(const t of towers){
-          const d=Math.hypot(t.x-u.x,t.y-u.y);
-          if(d<30 && d<bestDist){bestDist=d;target=t;}
-        }
-      }
-      if(state.crystal && state.crystal.alive && !target){
-        const c=state.crystal;
-        const d=Math.hypot(c.x-u.x,c.y-u.y);
-        if(d<30) target=c;
-      }
-      if(target && u.cd<=0){
-        u.cd=0.6;
-        target.hp -= u.atk;
-        beep('hit');
-        if(target===state.crystal && target.hp<=0 && target.alive){
-          target.alive=false;
-          state.manaMax+=4;
-          state.manaP=Math.min(state.manaMax,state.manaP+5);
-        }
-      }else{
-        u.y += u.dir*u.speed*dt;
+        state.enemyMana = clamp(state.enemyMana + 5, 0, state.manaMax);
       }
     }
   }
-  state.units = state.units.filter(u=>u.hp>0 && u.y>-40 && u.y<FIELD_H+40);
-
-  // bullets
-  for(const b of state.bullets){
-    const dx=b.tx-b.x, dy=b.ty-b.y;
-    const d=Math.hypot(dx,dy)||1;
-    const step=b.speed*dt;
-    if(step>=d){
-      const enemyTeam=b.team==='P'?'E':'P';
-      let hit=null;
-      for(const u of state.units){
-        if(u.team!==enemyTeam) continue;
-        const du=Math.hypot(u.x-b.tx,u.y-b.ty);
-        if(du<20){hit=u;break;}
-      }
-      if(!hit){
-        const tws = enemyTeam==='E'?state.towersE:state.towersP;
-        for(const t of tws){
-          const dtw=Math.hypot(t.x-b.tx,t.y-b.ty);
-          if(dtw<24){hit=t;break;}
-        }
-      }
-      if(!hit && state.crystal && state.crystal.alive){
-        const dc=Math.hypot(state.crystal.x-b.tx,state.crystal.y-b.ty);
-        if(dc<24) hit=state.crystal;
-      }
-      if(hit){
-        hit.hp -= b.dmg;
-        beep('hit');
-        if(hit===state.crystal && hit.hp<=0 && hit.alive){
-          hit.alive=false;
-          state.manaMax+=4;
-          state.manaP=Math.min(state.manaMax,state.manaP+5);
-        }
-      }
-      b._dead=true;
-    }else{
-      b.x += dx/d*step;
-      b.y += dy/d*step;
-    }
-  }
-  state.bullets = state.bullets.filter(b=>!b._dead);
-
-  // vittoria / sconfitta
-  function alive(arr){return arr.filter(t=>t.hp>0).length;}
-  const pAlive=alive(state.towersP);
-  const eAlive=alive(state.towersE);
-  if(state.running && (pAlive===0 || eAlive===0)){
-    state.running=false;
-    if(eAlive===0 && pAlive>0){state.result='win';state.wins++;beep('win');}
-    else if(pAlive===0 && eAlive>0){state.result='lose';beep('lose');}
-    else state.result='draw';
-  }
 }
 
-function bg(){
-  const g=ctx.createLinearGradient(0,0,0,FIELD_H);
-  g.addColorStop(0,'#dfecc2');
-  g.addColorStop(1,'#c3dc8e');
-  ctx.fillStyle=g;
-  ctx.fillRect(0,0,W,FIELD_H);
-
-  ctx.fillStyle='rgba(0,0,0,0.03)';
-  for(let x=0;x<W;x+=80){
-    ctx.fillRect(x,0,1,FIELD_H);
-  }
-  for(let y=0;y<FIELD_H;y+=80){
-    ctx.fillRect(0,y,W,1);
-  }
-
-  const riverY=FIELD_H/2;
-  ctx.fillStyle='#c9a071';
-  ctx.fillRect(0,riverY-32,W,12);
-  ctx.fillRect(0,riverY+20,W,12);
-  const wGrad=ctx.createLinearGradient(0,riverY-20,0,riverY+20);
-  wGrad.addColorStop(0,'#b9ecff');
-  wGrad.addColorStop(1,'#6bb9e9');
-  ctx.fillStyle=wGrad;
-  ctx.fillRect(0,riverY-20,W,40);
-
-  ctx.fillStyle='rgba(0,0,0,0.05)';
-  const laneX=LANES_X[selectedLane];
-  ctx.fillRect(laneX-W*0.17,0,W*0.34,FIELD_H);
+// ===================== Reset partita =====================
+let endBanner = '';
+function resetMatch(){
+  state.playing = true;
+  state.time = 0;
+  state.mana = 5;
+  state.enemyMana = 5;
+  state.crownsYou = 0;
+  state.crownsEnemy = 0;
+  state.units.length = 0;
+  state.projectiles.length = 0;
+  state.playerTowers.forEach(t=>{ t.hp = t.maxHp; });
+  state.enemyTowers.forEach(t=>{ t.hp = t.maxHp; });
+  state.manaCrystal.hp = state.manaCrystal.maxHp;
+  state.manaCrystal.alive = true;
+  state.manaCrystal.lastHitBy = null;
+  endBanner = '';
 }
 
-function hpBar(x,y,w,h,ratio){
-  ctx.fillStyle='rgba(0,0,0,0.5)';
-  ctx.fillRect(x,y,w,h);
-  const g=ctx.createLinearGradient(x,0,x+w,0);
-  g.addColorStop(0,'#7af07a');
-  g.addColorStop(1,'#2ec14b');
-  ctx.fillStyle=g;
-  ctx.fillRect(x,y,w*ratio,h);
-}
+// ===================== Rendering =====================
+function drawBackground(){
+  // campo
+  ctx.fillStyle = '#e3f2fd';
+  ctx.fillRect(0,0,LOGICAL_W,FIELD_H);
 
-function drawTower(t){
-  const friendly=t.team==='P';
-  ctx.fillStyle='rgba(0,0,0,0.35)';
+  // leggera texture a righe
+  ctx.strokeStyle = '#c5e1f5';
+  ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.ellipse(t.x,t.y+10,20,8,0,0,Math.PI*2);
-  ctx.fill();
-
-  const body=ctx.createLinearGradient(t.x-20,t.y-26,t.x+20,t.y+26);
-  body.addColorStop(0,'#f5f7fb');
-  body.addColorStop(1,'#b5c2d4');
-  ctx.fillStyle=body;
-  ctx.beginPath();
-  ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2);
-  ctx.fill();
-  ctx.strokeStyle='#7b889b';
-  ctx.lineWidth=3;
-  ctx.beginPath();
-  ctx.ellipse(t.x,t.y,26,24,0,0,Math.PI*2);
+  for(let y=0;y<FIELD_H;y+=64){
+    ctx.moveTo(0,y); ctx.lineTo(LOGICAL_W,y);
+  }
+  for(let x=0;x<LOGICAL_W;x+=80){
+    ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H);
+  }
   ctx.stroke();
 
-  const head=ctx.createRadialGradient(t.x-4,t.y-4,2,t.x,t.y,14);
-  head.addColorStop(0,'#fff');
-  head.addColorStop(1,friendly?'#2d7fe8':'#e24c4c');
-  ctx.fillStyle=head;
-  ctx.beginPath();
-  ctx.arc(t.x,t.y,16,0,Math.PI*2);
-  ctx.fill();
+  // highlight corsia selezionata
+  const laneW = LOGICAL_W / 3;
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(selectedLane * laneW, 0, laneW, FIELD_H);
 
-  hpBar(t.x-24,t.y-32,48,5,clamp(t.hp/t.maxHp,0,1));
+  // fiume
+  const riverH = 40;
+  const y0 = RIVER_Y - riverH/2;
+  const grad = ctx.createLinearGradient(0,y0,0,y0+riverH);
+  grad.addColorStop(0,'#b3e5fc');
+  grad.addColorStop(1,'#4fc3f7');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,y0,LOGICAL_W,riverH);
+
+  // ponti
+  ctx.fillStyle = '#8d6e63';
+  const bridgeW = 140, bridgeH = 22;
+  ctx.fillRect(LOGICAL_W*0.3-bridgeW/2,RIVER_Y-bridgeH/2,bridgeW,bridgeH);
+  ctx.fillRect(LOGICAL_W*0.7-bridgeW/2,RIVER_Y-bridgeH/2,bridgeW,bridgeH);
 }
 
-function drawCrystal(){
-  const c=state.crystal;
-  if(!c || !c.alive) return;
-  ctx.fillStyle='rgba(0,0,0,0.35)';
+function drawTower(t, friendly){
+  // base
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.35)';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = '#cfd8dc';
   ctx.beginPath();
-  ctx.ellipse(c.x,c.y+20,20,8,0,0,Math.PI*2);
+  ctx.roundRect(t.x-26,t.y-30,52,60,10);
   ctx.fill();
-  const grad=ctx.createLinearGradient(c.x-20,c.y-30,c.x+20,c.y+30);
-  grad.addColorStop(0,'#8ef5ff');
-  grad.addColorStop(0.5,'#5cc2ff');
-  grad.addColorStop(1,'#2b7fe6');
-  ctx.fillStyle=grad;
-  ctx.strokeStyle='#ffffffaa';
+  ctx.restore();
+
+  // cupola
+  ctx.fillStyle = friendly ? '#42a5f5' : '#ef5350';
   ctx.beginPath();
-  ctx.moveTo(c.x,c.y-30);
-  ctx.lineTo(c.x+20,c.y);
-  ctx.lineTo(c.x,c.y+30);
-  ctx.lineTo(c.x-20,c.y);
-  ctx.closePath();
+  ctx.arc(t.x, t.y-14, 18, 0, Math.PI*2);
   ctx.fill();
-  ctx.stroke();
-  hpBar(c.x-30,c.y+34,60,5,clamp(c.hp/c.maxHp,0,1));
+
+  // cannone (solo decorativo)
+  ctx.fillStyle = '#263238';
+  ctx.fillRect(t.x-6, t.y-4, 12, 14);
+
+  // barra HP
+  const w = 70, h = 7;
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(t.x-w/2, t.y-40, w, h);
+  const ratio = clamp(t.hp/t.maxHp, 0, 1);
+  const g = ctx.createLinearGradient(t.x-w/2,0,t.x+w/2,0);
+  g.addColorStop(0,'#81c784');
+  g.addColorStop(1,'#43a047');
+  ctx.fillStyle = g;
+  ctx.fillRect(t.x-w/2, t.y-40, w*ratio, h);
 }
 
 function drawUnit(u){
-  const friendly=u.team==='P';
-  ctx.fillStyle='rgba(0,0,0,0.35)';
+  // ombra
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.beginPath();
-  ctx.ellipse(u.x,u.y+10,16,6,0,0,Math.PI*2);
+  ctx.ellipse(u.x, u.y+10, 18, 6, 0, 0, Math.PI*2);
   ctx.fill();
 
-  const body=ctx.createLinearGradient(u.x-10,u.y,u.x+10,u.y+24);
-  if(u.kind==='tank'){body.addColorStop(0,friendly?'#8fb4ff':'#ff8f8f');body.addColorStop(1,friendly?'#375bb3':'#b33434');}
-  else if(u.kind==='scout'){body.addColorStop(0,friendly?'#9fe3ff':'#ffd39f');body.addColorStop(1,friendly?'#1d9fe0':'#e68a2e');}
-  else if(u.kind==='spark'){body.addColorStop(0,'#ffe6a3');body.addColorStop(1,friendly?'#f1b02d':'#e2682e');}
-  else{body.addColorStop(0,'#bff5c6');body.addColorStop(1,'#45b663');}
-  ctx.fillStyle=body;
-  ctx.strokeStyle='#333';
+  // corpo stile "mini soldato"
+  const bodyColor = (u.team === 'player') ? '#42a5f5' : '#ffb74d';
+  const accent    = (u.type === 'tank') ? '#ff7043' :
+                    (u.type === 'spark') ? '#fff176' :
+                    (u.type === 'healer') ? '#81c784' : bodyColor;
+
+  ctx.fillStyle = bodyColor;
   ctx.beginPath();
-  ctx.rect(u.x-12,u.y-4,24,24);
+  ctx.roundRect(u.x-14, u.y-22, 28, 30, 6);
   ctx.fill();
-  ctx.stroke();
 
-  ctx.fillStyle='#f7d6b0';
+  ctx.fillStyle = accent;
   ctx.beginPath();
-  ctx.arc(u.x,u.y-10,8,0,Math.PI*2);
+  ctx.roundRect(u.x-10, u.y-18, 20, 18, 4);
   ctx.fill();
-  ctx.strokeStyle='#c6956a';
-  ctx.stroke();
 
-  ctx.fillStyle='#000';
+  // testa
+  ctx.fillStyle = '#ffe0b2';
   ctx.beginPath();
-  ctx.arc(u.x-3,u.y-11,1.2,0,Math.PI*2);
-  ctx.arc(u.x+3,u.y-11,1.2,0,Math.PI*2);
+  ctx.arc(u.x, u.y-30, 10, 0, Math.PI*2);
   ctx.fill();
+
+  // occhi
+  ctx.fillStyle = '#37474f';
   ctx.beginPath();
-  ctx.arc(u.x,u.y-8,3,0,Math.PI);
-  ctx.stroke();
+  ctx.arc(u.x-3, u.y-31, 1.4, 0, Math.PI*2);
+  ctx.arc(u.x+3, u.y-31, 1.4, 0, Math.PI*2);
+  ctx.fill();
 
-  if(u.kind==='spark'){
-    ctx.fillStyle='rgba(255,255,255,0.9)';
-    ctx.beginPath();
-    ctx.moveTo(u.x,u.y+4);
-    ctx.lineTo(u.x-4,u.y+10);
-    ctx.lineTo(u.x+4,u.y+10);
-    ctx.closePath();
-    ctx.fill();
-  }else if(u.kind==='healer'){
-    ctx.fillStyle='#fff';
-    ctx.fillRect(u.x-2,u.y+2,4,8);
-    ctx.fillRect(u.x-6,u.y+4,12,4);
-  }else if(u.kind==='tank'){
-    ctx.fillStyle='rgba(0,0,0,0.3)';
-    ctx.fillRect(u.x-12,u.y+6,24,6);
-  }
-
-  hpBar(u.x-14,u.y-22,28,4,clamp(u.hp/u.maxHp,0,1));
+  // barra HP
+  const ratio = clamp(u.hp/u.maxHp, 0, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(u.x-12, u.y-40, 24, 5);
+  const g = ctx.createLinearGradient(u.x-12,0,u.x+12,0);
+  g.addColorStop(0,'#a5d6a7');
+  g.addColorStop(1,'#43a047');
+  ctx.fillStyle = g;
+  ctx.fillRect(u.x-12, u.y-40, 24*ratio, 5);
 }
 
-function drawBullets(){
-  for(const b of state.bullets){
-    const grad=ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,6);
-    grad.addColorStop(0,'#fff9c4');
-    grad.addColorStop(1,'rgba(255,255,255,0)');
-    ctx.fillStyle=grad;
-    ctx.beginPath();
-    ctx.arc(b.x,b.y,6,0,Math.PI*2);
-    ctx.fill();
-  }
+function drawCrystal(){
+  const c = state.manaCrystal;
+  if(!c.alive) return;
+
+  // base
+  ctx.fillStyle = '#455a64';
+  ctx.beginPath();
+  ctx.ellipse(c.x, c.y+16, 26, 10, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // cristallo
+  const g = ctx.createLinearGradient(c.x, c.y-32, c.x, c.y+32);
+  g.addColorStop(0,'#e1f5fe');
+  g.addColorStop(1,'#0288d1');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(c.x, c.y-32);
+  ctx.lineTo(c.x+22, c.y);
+  ctx.lineTo(c.x, c.y+32);
+  ctx.lineTo(c.x-22, c.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#01579b';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // barra HP
+  const ratio = clamp(c.hp/c.maxHp, 0, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(c.x-24, c.y-42, 48, 6);
+  const g2 = ctx.createLinearGradient(c.x-24,0,c.x+24,0);
+  g2.addColorStop(0,'#b3e5fc');
+  g2.addColorStop(1,'#0288d1');
+  ctx.fillStyle = g2;
+  ctx.fillRect(c.x-24, c.y-42, 48*ratio, 6);
+
+  ctx.fillStyle = '#e1f5fe';
+  ctx.font = '11px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('Cristallo Mana', c.x, c.y-52);
 }
 
-function drawHud(){
-  ctx.fillStyle='rgba(0,0,0,0.75)';
-  ctx.fillRect(0,0,W,24);
-  ctx.fillStyle='#ffd966';
-  ctx.font='12px system-ui';
-  ctx.textAlign='left';
-  ctx.fillText('👑 '+state.wins,8,16);
-  ctx.textAlign='center';
-  ctx.fillStyle='#e5f0ff';
-  ctx.fillText('In partita: tocca il campo per scegliere corsia, poi le carte.', W/2,16);
-}
-
-function drawUI(){
-  const y0=FIELD_H;
-  ctx.fillStyle='#05070b';
-  ctx.fillRect(0,y0,W,UI_H);
-
-  const mx=10,my=y0+8,mw=W-20,mh=12;
-  ctx.fillStyle='#222738';
-  ctx.fillRect(mx,my,mw,mh);
-  const r=clamp(state.manaP/state.manaMax,0,1);
-  const g=ctx.createLinearGradient(mx,0,mx+mw,0);
-  g.addColorStop(0,'#55d2ff');
-  g.addColorStop(1,'#1a7bff');
-  ctx.fillStyle=g;
-  ctx.fillRect(mx,my,mw*r,mh);
-  ctx.fillStyle='#aab7ff';
-  ctx.font='11px system-ui';
-  ctx.textAlign='left';
-  ctx.fillText('Mana: '+Math.floor(state.manaP)+' / '+state.manaMax, mx, my+mh+12);
-
-  const pad=6;
-  const cardW=(W-pad*6)/5;
-  const cardH=70;
-  cardRects=[];
-  for(let i=0;i<cards.length;i++){
-    const c=cards[i];
-    const x=pad + i*(cardW+pad);
-    const y=y0+30;
-    cardRects.push({x,y,w:cardW,h:cardH,index:i});
-    const playable = (c.key==='restart') || (state.manaP>=c.cost && state.running);
-    ctx.fillStyle = playable ? '#121826' : '#25293a';
-    ctx.strokeStyle = playable ? '#4e6bff' : '#44495f';
+function drawProjectiles(){
+  for(const p of state.projectiles){
+    // scia
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    const gx0 = p.x - p.vx*0.05;
+    const gy0 = p.y - p.vy*0.05;
+    const grad = ctx.createLinearGradient(gx0,gy0,p.x,p.y);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(1, p.colorB);
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.rect(x,y,cardW,cardH);
-    ctx.fill();
+    ctx.moveTo(gx0,gy0);
+    ctx.lineTo(p.x,p.y);
     ctx.stroke();
+    ctx.restore();
 
+    // corpo
+    const glow = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,8);
+    glow.addColorStop(0,p.colorA);
+    glow.addColorStop(1,'rgba(255,255,255,0)');
     ctx.save();
-    ctx.translate(x+cardW/2,y+22);
-    if(c.key==='scout'){
-      ctx.fillStyle='#7ecbff';
-      ctx.beginPath();ctx.arc(0,0,7,0,Math.PI*2);ctx.fill();
-    }else if(c.key==='spark'){
-      ctx.fillStyle='#ffe58a';
-      ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(9,8);ctx.lineTo(-9,8);ctx.closePath();ctx.fill();
-    }else if(c.key==='tank'){
-      ctx.fillStyle='#ff9f88';
-      ctx.fillRect(-9,-6,18,12);
-    }else if(c.key==='healer'){
-      ctx.fillStyle='#7cf0a3';
-      ctx.fillRect(-2,-8,4,16);
-      ctx.fillRect(-8,-2,16,4);
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,6,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawTopBar(){
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(0,0,LOGICAL_W,26);
+  ctx.fillStyle = '#ffd54f';
+  ctx.font = 'bold 13px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText('👑 ' + state.crownsYou, 8, 17);
+  ctx.textAlign = 'right';
+  ctx.fillText(state.crownsEnemy + ' 👑', LOGICAL_W-8, 17);
+}
+
+function drawManaAndCards(){
+  const barX = 16, barY = FIELD_H + 12;
+  const barW = LOGICAL_W - 32, barH = 12;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(barX, barY, barW, barH);
+  const ratio = state.mana / state.manaMax;
+  const g = ctx.createLinearGradient(barX,0,barX+barW,0);
+  g.addColorStop(0,'#64b5f6');
+  g.addColorStop(1,'#1e88e5');
+  ctx.fillStyle = g;
+  ctx.fillRect(barX, barY, barW*ratio, barH);
+
+  if(manaFlash > 0){
+    ctx.save();
+    ctx.globalAlpha = manaFlash / 0.4;
+    ctx.fillStyle = 'rgba(244,67,54,0.5)';
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.restore();
+  }
+
+  ctx.fillStyle = '#fff';
+  ctx.font = '11px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText('Mana: ' + Math.floor(state.mana) + ' / ' + state.manaMax, barX, barY-4);
+
+  // carte
+  const cardY = FIELD_H + 32;
+  const pad = 12;
+  const gap = 8;
+  const totalGap = gap * (CARDS.length-1);
+  const cardW = (LOGICAL_W - pad*2 - totalGap) / CARDS.length;
+  const cardH = UI_H - 42;
+
+  cardRects = [];
+  for(let i=0;i<CARDS.length;i++){
+    const c = CARDS[i];
+    const x = pad + i*(cardW+gap);
+    const y = cardY;
+    cardRects.push({ x, y, w:cardW, h:cardH });
+
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, cardW, cardH, 10);
+    ctx.fill();
+
+    ctx.fillStyle = c.color;
+    ctx.beginPath();
+    ctx.roundRect(x+4, y+4, cardW-8, cardH-26, 8);
+    ctx.fill();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(c.label, x+cardW/2, y+cardH-10);
+
+    if(c.key !== 'reset'){
+      ctx.font = 'bold 14px system-ui';
+      ctx.fillText(String(c.cost), x+cardW/2, y+18);
     }else{
-      ctx.strokeStyle='#b7c4ff';
-      ctx.beginPath();ctx.arc(0,0,8,Math.PI*0.2,Math.PI*1.8);ctx.stroke();
-    }
-    ctx.restore();
-
-    ctx.textAlign='center';
-    ctx.fillStyle='#e5e9ff';
-    ctx.font='11px system-ui';
-    ctx.fillText(c.name,x+cardW/2,y+cardH-16);
-    if(c.cost>0){
-      ctx.fillStyle='#8bb0ff';
-      ctx.font='10px system-ui';
-      ctx.fillText(c.cost,x+cardW/2,y+14);
+      ctx.font = '12px system-ui';
+      ctx.fillText('↻', x+cardW/2, y+18);
     }
   }
 
-  if(notEnoughMana>0){
-    ctx.save();
-    ctx.globalAlpha=Math.min(1,notEnoughMana/0.6);
-    ctx.fillStyle='rgba(0,0,0,0.85)';
-    ctx.fillRect(W/2-80,y0+UI_H/2-18,160,36);
-    ctx.fillStyle='#ffb3b3';
-    ctx.textAlign='center';
-    ctx.font='13px system-ui';
-    ctx.fillText('Mana insufficiente', W/2, y0+UI_H/2+4);
-    ctx.restore();
-  }
+  ctx.textAlign = 'center';
+  ctx.font = '11px system-ui';
+  ctx.fillStyle = '#cfd8dc';
+  ctx.fillText('Tocca il campo per scegliere la corsia, poi le carte.', LOGICAL_W/2, FIELD_H+UI_H-6);
 }
 
-function drawResult(){
-  if(!state.result) return;
-  ctx.fillStyle='rgba(0,0,0,0.7)';
-  ctx.fillRect(0,FIELD_H/2-50,W,100);
-  ctx.fillStyle='#fff';
-  ctx.textAlign='center';
-  ctx.font='24px system-ui';
-  const t = state.result==='win'?'Vittoria!':(state.result==='lose'?'Sconfitta':'Pareggio');
-  ctx.fillText(t,W/2,FIELD_H/2-8);
-  ctx.font='14px system-ui';
-  ctx.fillStyle='#d7e0ff';
-  ctx.fillText("Tocca 'Riavvia' per giocare di nuovo.",W/2,FIELD_H/2+18);
+function drawEndBanner(){
+  if(!endBanner) return;
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  const w = LOGICAL_W*0.8;
+  const h = 80;
+  const x = (LOGICAL_W-w)/2;
+  const y = FIELD_H/2 - h/2;
+  ctx.beginPath();
+  ctx.roundRect(x,y,w,h,12);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText(endBanner, LOGICAL_W/2, y+32);
+  ctx.font = '13px system-ui';
+  ctx.fillText("Tocca 'Riavvia' per giocare ancora.", LOGICAL_W/2, y+54);
 }
 
-// loop
-let last=performance.now();
-function loop(now){
-  const dt=Math.min(0.05,(now-last)/1000);
-  last=now;
-  update(dt);
+function render(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
   ctx.setTransform(scale,0,0,scale,offX,offY);
-  ctx.clearRect(0,0,W,H);
-  bg();
-  for(const t of state.towersE) drawTower(t);
-  for(const t of state.towersP) drawTower(t);
+
+  drawBackground();
+  drawTopBar();
+
+  // torri
+  for(const t of state.enemyTowers) drawTower(t,false);
+  for(const t of state.playerTowers) drawTower(t,true);
+
   drawCrystal();
+
+  // unità + proiettili
   for(const u of state.units) drawUnit(u);
-  drawBullets();
-  drawHud();
-  drawUI();
-  drawResult();
+  drawProjectiles();
+
+  drawManaAndCards();
+  drawEndBanner();
+}
+
+// ===================== Loop principale =====================
+let lastTime = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+  update(dt);
+  render();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
-// input
-function onPointer(ev){
-  ev.preventDefault();
-  const p = ('touches' in ev && ev.touches.length)
-    ? toLogical(ev.touches[0].clientX,ev.touches[0].clientY)
-    : toLogical(ev.clientX,ev.clientY);
-  const x=p.x,y=p.y;
-  if(x<0||x>W||y<0||y>H) return;
-  if(y>FIELD_H){
-    for(const r of cardRects){
-      if(x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h){
-        const c=cards[r.index];
-        if(c.key==='restart') resetGame();
-        else spawnP(c.key);
-        return;
-      }
-    }
-  }else{
-    let best=0,bd=1e9;
-    for(let i=0;i<LANES_X.length;i++){
-      const d=Math.abs(LANES_X[i]-x);
-      if(d<bd){bd=d;best=i;}
-    }
-    selectedLane=best;
-  }
-}
-canvas.addEventListener('mousedown',onPointer);
-canvas.addEventListener('touchstart',onPointer,{passive:false});
-
-// PWA
+// ===================== PWA: service worker =====================
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
 </script>
 </body>
