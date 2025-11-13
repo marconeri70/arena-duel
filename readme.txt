@@ -1,0 +1,1 @@
+Placeholder file — il progetto completo verrà rigenerato da zero nel prossimo passo.
