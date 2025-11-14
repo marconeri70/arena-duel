@@ -3,6 +3,7 @@
   "short_name": "ArenaDuel",
   "start_url": "./",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#020617",
   "theme_color": "#020617",
   "icons": [
