@@ -1,60 +1,801 @@
 <!doctype html>
 <html lang="it">
 <head>
-<meta charset="utf-8">
-
-<!-- Layout e viewport -->
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-
-<title>Arena Duel – PWA</title>
-
-<!-- Manifest per installazione come app -->
-<link rel="manifest" href="manifest.webmanifest">
-
-<!-- Icone base -->
-<link rel="icon" href="assets/icon-192.png">
-
-<style>
-  html, body {
-    margin:0;
-    padding:0;
-    height:100%;
-    background:#0f1115;
-    overflow:hidden;
-  }
-
-  #gameCanvas {
-    position:fixed;
-    inset:0;
-    width:100vw;
-    height:100vh;
-    display:block;
-    background:#0f1115;
-    touch-action:none;
-    -webkit-tap-highlight-color:transparent;
-  }
-
-  /* Nasconde le scrollbar */
-  ::-webkit-scrollbar {
-    display:none;
-  }
-</style>
-
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+  <title>Arena Duel PWA</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#050712">
+  <style>
+    :root{
+      --ui-bg:#050712;
+      --ui-card:#0c1220;
+      --ui-accent:#2f80ed;
+      --ui-text:#f5f7ff;
+      --ui-muted:#8a94b8;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    html,body{height:100%;background:#050712;color:var(--ui-text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+    body{display:flex;flex-direction:column;overflow:hidden;}
+    header{
+      height:40px;
+      background:#050712;
+      color:var(--ui-text);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:0 12px;
+      font-size:13px;
+      border-bottom:1px solid #151a2b;
+    }
+    header span.small{font-size:11px;color:var(--ui-muted);}
+    #game-wrap{flex:1;position:relative;background:#050712;}
+    canvas{
+      position:absolute;
+      inset:0;
+      width:100%;
+      height:100%;
+      display:block;
+      touch-action:none;
+      -webkit-tap-highlight-color:transparent;
+    }
+    #bottom-ui{
+      height:120px;
+      background:var(--ui-bg);
+      border-top:1px solid #151a2b;
+      padding:6px 6px 10px;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    #mana-bar-wrap{
+      height:14px;
+      background:#101523;
+      border-radius:999px;
+      overflow:hidden;
+      border:1px solid #1b2235;
+    }
+    #mana-fill{
+      height:100%;
+      width:0%;
+      background:linear-gradient(90deg,#56ccf2,#2f80ed);
+      transition:width .12s linear;
+    }
+    #card-row{
+      flex:1;
+      display:flex;
+      gap:6px;
+      overflow-x:auto;
+      padding-bottom:2px;
+    }
+    .card{
+      flex:1 1 0;
+      min-width:0;
+      background:var(--ui-card);
+      border-radius:16px;
+      border:1px solid #222b44;
+      padding:6px 6px 4px;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:space-between;
+      cursor:pointer;
+      user-select:none;
+      transition:transform .1s, box-shadow .1s, border-color .1s;
+    }
+    .card.active{
+      border-color:var(--ui-accent);
+      box-shadow:0 0 0 1px #2f80ed55;
+      transform:translateY(-2px);
+    }
+    .card.disabled{
+      opacity:.45;
+      filter:grayscale(.4);
+    }
+    .card .icon{
+      width:26px;
+      height:26px;
+      border-radius:999px;
+      margin-bottom:4px;
+    }
+    .card .title{
+      font-size:12px;
+      font-weight:600;
+      text-align:center;
+      margin-bottom:2px;
+    }
+    .card .cost{
+      font-size:10px;
+      color:var(--ui-muted);
+    }
+    #toast{
+      position:absolute;
+      left:50%;
+      bottom:132px;
+      transform:translateX(-50%);
+      background:#050712e0;
+      color:var(--ui-text);
+      padding:6px 10px;
+      border-radius:999px;
+      font-size:11px;
+      pointer-events:none;
+      opacity:0;
+      transition:opacity .25s;
+      max-width:90%;
+      text-align:center;
+      border:1px solid #222b44;
+    }
+    #toast.show{opacity:1;}
+    @media (min-width:800px){
+      #bottom-ui{height:110px;padding:6px 10px 10px;}
+      .card .title{font-size:13px;}
+      .card .cost{font-size:11px;}
+    }
+  </style>
 </head>
 <body>
-
-<!-- Canvas del gioco -->
-<canvas id="gameCanvas"></canvas>
-
-<!-- Motore di gioco -->
-<script src="game.js"></script>
-
-<!-- Installa Service Worker -->
+  <header>
+    <div>
+      <strong>Arena Duel</strong>
+      <span class="small">Lv <span id="ui-level">1</span> • Vittorie <span id="ui-wins">0</span></span>
+    </div>
+    <div class="small">Arena <span id="ui-arena">1</span></div>
+  </header>
+  <div id="game-wrap">
+    <canvas id="game"></canvas>
+    <div id="toast"></div>
+  </div>
+  <div id="bottom-ui">
+    <div id="mana-bar-wrap"><div id="mana-fill"></div></div>
+    <div id="card-row"></div>
+  </div>
 <script>
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js');
+const canvas=document.getElementById('game');
+const ctx=canvas.getContext('2d',{alpha:false});
+let DPR=window.devicePixelRatio||1;
+let VIRTUAL_W=720,VIRTUAL_H=1280;
+let scale=1,offX=0,offY=0;
+function resizeCanvas(){
+  const r=canvas.getBoundingClientRect();
+  DPR=window.devicePixelRatio||1;
+  canvas.width=r.width*DPR;
+  canvas.height=r.height*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  const aspect=VIRTUAL_H/VIRTUAL_W;
+  const w=r.width,h=r.height;
+  let targetW,targetH;
+  if(h/w>aspect){targetW=w;targetH=w*aspect;}else{targetH=h;targetW=h/aspect;}
+  scale=targetW/VIRTUAL_W;
+  offX=(w-targetW)/2;
+  offY=(h-targetH)/2;
 }
-</script>
+window.addEventListener('resize',resizeCanvas);
+resizeCanvas();
+function toLogical(clientX,clientY){
+  const rect=canvas.getBoundingClientRect();
+  const x=(clientX-rect.left-offX)/scale;
+  const y=(clientY-rect.top-offY)/scale;
+  return {x,y};
+}
 
+// ----- Simple toast -----
+const toastEl=document.getElementById('toast');
+let toastTimer=null;
+function showToast(msg,ms=1800){
+  toastEl.textContent=msg;
+  toastEl.classList.add('show');
+  if(toastTimer)clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>toastEl.classList.remove('show'),ms);
+}
+
+// ----- Game state -----
+const LANES=3;
+const LANE_X=[VIRTUAL_W*0.2,VIRTUAL_W*0.5,VIRTUAL_W*0.8];
+const FIELD_H=VIRTUAL_H-220;
+const RIVER_Y=FIELD_H*0.5;
+
+const arenas=[
+  {id:1,name:'Prato del Fiume',bg:'#c6e6a0',enemyBoost:1.0,unlockWins:0},
+  {id:2,name:'Valle del Tramonto',bg:'#d0c4f0',enemyBoost:1.15,unlockWins:3},
+  {id:3,name:'Fortezza di Ghiaccio',bg:'#c9e4ff',enemyBoost:1.3,unlockWins:7},
+];
+
+let profile={
+  level:1,
+  wins:0,
+  unlockedArenaId:1,
+  deckIds:['scout','tank','spark'],
+};
+try{
+  const saved=JSON.parse(localStorage.getItem('arena-duel-profile')||'null');
+  if(saved)profile=Object.assign(profile,saved);
+}catch(e){}
+function saveProfile(){localStorage.setItem('arena-duel-profile',JSON.stringify(profile));}
+
+function getCurrentArena(){
+  const arr=arenas.filter(a=>a.unlockWins<=profile.wins);
+  const last=arr[arr.length-1]||arenas[0];
+  profile.unlockedArenaId=Math.max(profile.unlockedArenaId,last.id);
+  return last;
+}
+
+// Units and cards
+const cardsDef={
+  scout:{id:'scout',name:'Scout',cost:3,color:'#4fa3ff',type:'melee',speed:105,hp:34,atk:6,range:26},
+  tank:{id:'tank',name:'Tank',cost:4,color:'#ff7676',type:'melee',speed:70,hp:90,atk:9,range:28},
+  spark:{id:'spark',name:'Spark',cost:2,color:'#ffd15c',type:'ranged',speed:88,hp:26,atk:7,range:120},
+  healer:{id:'healer',name:'Healer',cost:3,color:'#7cd37c',type:'healer',speed:90,hp:30,atk:-6,range:100},
+};
+function ensureArenaUnlockCards(){
+  if(profile.wins>=3 && !profile.deckIds.includes('healer')) profile.deckIds.push('healer');
+}
+ensureArenaUnlockCards();
+
+// Game runtime state
+let state=null;
+function newMatch(){
+  const arena=getCurrentArena();
+  ensureArenaUnlockCards();
+  state={
+    arena,
+    time:0,
+    mana:5,
+    manaMax:10,
+    manaRegen:2.1,
+    selectedCardId:profile.deckIds[0],
+    playing:true,
+    result:null,
+    playerCrowns:0,
+    enemyCrowns:0,
+    playerTowers:[
+      {team:'P',lane:0,x:LANE_X[0],y:FIELD_H-70,hp:100,maxHp:100},
+      {team:'P',lane:2,x:LANE_X[2],y:FIELD_H-70,hp:100,maxHp:100},
+    ],
+    enemyTowers:[
+      {team:'E',lane:0,x:LANE_X[0],y:70,hp:100,maxHp:100},
+      {team:'E',lane:2,x:LANE_X[2],y:70,hp:100,maxHp:100},
+    ],
+    crystal:{x:LANE_X[1],y:RIVER_Y+6,hp:80,maxHp:80,owner:null},
+    units:[],
+    projectiles:[],
+    floats:[],
+  };
+  updateHUD();
+  buildCardRow();
+  showToast('In partita: tocca il campo per scegliere corsia, poi le carte.');
+}
+function updateHUD(){
+  document.getElementById('ui-level').textContent=profile.level;
+  document.getElementById('ui-wins').textContent=profile.wins;
+  document.getElementById('ui-arena').textContent=getCurrentArena().id;
+}
+
+// UI: cards at bottom
+const cardRow=document.getElementById('card-row');
+function buildCardRow(){
+  cardRow.innerHTML='';
+  profile.deckIds.forEach(id=>{
+    const def=cardsDef[id];
+    const el=document.createElement('button');
+    el.className='card';
+    el.dataset.cardId=id;
+    el.innerHTML=\`
+      <div class="icon" style="background:\${def.color}; box-shadow:0 0 0 3px #ffffff15;"></div>
+      <div class="title">\${def.name}</div>
+      <div class="cost">Costo: \${def.cost}</div>
+    \`;
+    el.addEventListener('click',()=>{
+      if(state && state.playing){
+        state.selectedCardId=id;
+        refreshCardSelection();
+      }
+    });
+    cardRow.appendChild(el);
+  });
+  // restart card
+  const r=document.createElement('button');
+  r.className='card';
+  r.dataset.cardId='restart';
+  r.innerHTML=\`
+    <div class="icon" style="background:#444; box-shadow:0 0 0 3px #ffffff15;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;">↻</div>
+    <div class="title">Riavvia</div>
+    <div class="cost">Nuova partita</div>
+  \`;
+  r.addEventListener('click',()=>{
+    newMatch();
+  });
+  cardRow.appendChild(r);
+  refreshCardSelection();
+}
+function refreshCardSelection(){
+  const cardsEls=[...cardRow.querySelectorAll('.card')];
+  cardsEls.forEach(el=>{
+    const id=el.dataset.cardId;
+    el.classList.toggle('active',id===state.selectedCardId);
+    if(cardsDef[id]){
+      el.classList.toggle('disabled',state.mana<cardsDef[id].cost || !state.playing);
+    }else if(id==='restart'){
+      el.classList.toggle('disabled',state.playing);
+    }
+  });
+}
+
+// helpers
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function rand(a,b){return a+Math.random()*(b-a);}
+function addFloat(text,x,y,color){
+  state.floats.push({text,x,y,vy:-22,age:0,color});
+}
+function spawnUnit(team,lane,cardId){
+  const def=cardsDef[cardId];
+  const x=LANE_X[lane];
+  const y=(team==='P')?FIELD_H-120:120;
+  const dir=team==='P'?-1:1;
+  const laneUnits=state.units.filter(u=>u.team===team && u.lane===lane);
+  let maxY = (team==='P'?FIELD_H-120:120);
+  laneUnits.forEach(u=>{
+    if(team==='P')maxY=Math.min(maxY,u.y-40);
+    else maxY=Math.max(maxY,u.y+40);
+  });
+  const unit={
+    team,lane,x,y:maxY,dir,
+    type:def.type,
+    speed:def.speed,
+    hp:def.hp,
+    maxHp:def.hp,
+    atk:def.atk,
+    range:def.range,
+    cooldown:0,
+    anim:0,
+  };
+  state.units.push(unit);
+}
+function nearestEnemy(unit){
+  const enemy=unit.team==='P'?'E':'P';
+  const foes=state.units.filter(u=>u.team===enemy && u.lane===unit.lane);
+  let best=null,bestDist=1e9;
+  foes.forEach(f=>{
+    const d=Math.abs(f.y-unit.y);
+    if(d<bestDist){bestDist=d;best=f;}
+  });
+  // tower in lane
+  const towers=(enemy==='E'?state.enemyTowers:state.playerTowers).filter(t=>t.lane===unit.lane && t.hp>0);
+  towers.forEach(t=>{
+    const d=Math.abs(t.y-unit.y);
+    if(d<bestDist){bestDist=d;best=t;}
+  });
+  return {target:best,dist:bestDist};
+}
+
+function fireProjectile(from,target,opts){
+  const dx=target.x-from.x,dy=target.y-from.y;
+  const len=Math.hypot(dx,dy)||1;
+  const speed=opts.speed||220;
+  const vx=dx/len*speed;
+  const vy=dy/len*speed;
+  state.projectiles.push({
+    x:from.x,y:from.y,vx,vy,
+    life:2,
+    team:opts.team,
+    heal:opts.heal||false,
+    dmg:opts.dmg||5,
+    color:opts.color||'#fff',
+  });
+}
+
+// input handling
+let currentLane=1;
+canvas.addEventListener('pointerdown',ev=>{
+  const p=toLogical(ev.clientX,ev.clientY);
+  if(p.y>FIELD_H)return;
+  // choose nearest lane
+  let best=0,bestDist=1e9;
+  for(let i=0;i<LANES;i++){
+    const d=Math.abs(p.x-LANE_X[i]);
+    if(d<bestDist){bestDist=d;best=i;}
+  }
+  currentLane=best;
+  showToast('Corsia '+(best===0?'A':best===1?'B':'C')+' selezionata');
+});
+
+// game loop
+let lastTs=performance.now();
+function loop(ts){
+  const dt=(ts-lastTs)/1000;
+  lastTs=ts;
+  if(state)update(dt);
+  if(state)render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function update(dt){
+  if(!state.playing){
+    refreshCardSelection();
+    return;
+  }
+  state.time+=dt;
+  state.mana=clamp(state.mana+state.manaRegen*dt,0,state.manaMax);
+
+  // AI: simple
+  if(state.time>2){
+    if(Math.random()<0.9*dt){
+      const lane=Math.floor(Math.random()*LANES);
+      const choices=['spark','scout','tank'];
+      const id=choices[Math.floor(Math.random()*choices.length)];
+      const def=cardsDef[id];
+      if(def && state.mana>=def.cost*0.4){ // enemy mana virtual
+        const u=JSON.parse(JSON.stringify(cardsDef[id]));
+        spawnUnit('E',lane,id);
+      }
+    }
+  }
+
+  // Units
+  const laneGap=36;
+  state.units.forEach(u=>{
+    u.anim+=dt;
+    u.cooldown=Math.max(0,u.cooldown-dt);
+    const enemy=nearestEnemy(u);
+    const advanceDir=u.dir;
+    let blocked=false;
+
+    // prevent overtaking: check ally ahead
+    const alliesAhead=state.units.filter(a=>a.team===u.team && a.lane===u.lane && ((u.team==='P' && a.y<u.y)||(u.team==='E' && a.y>u.y)));
+    alliesAhead.forEach(a=>{
+      const dy=Math.abs(a.y-u.y);
+      if(dy<laneGap)blocked=true;
+    });
+
+    if(enemy.target && enemy.dist < u.range+4){
+      // in range
+      if(u.type==='melee'){
+        if(u.cooldown<=0){
+          u.cooldown=0.7;
+          if(enemy.target.hp!==undefined){
+            enemy.target.hp-=u.atk;
+            addFloat('-'+u.atk.toFixed(0),enemy.target.x,enemy.target.y-20,u.team==='P'?'#8cf':'#f99');
+          }
+        }
+      }else if(u.type==='ranged'){
+        if(u.cooldown<=0){
+          u.cooldown=0.9;
+          fireProjectile(u,enemy.target,{team:u.team,dmg:u.atk,color:u.team==='P'?'#8cf':'#f99'});
+        }
+      }else if(u.type==='healer'){
+        // look for wounded ally in lane
+        const allies=state.units.filter(a=>a.team===u.team && a.lane===u.lane && a.hp<a.maxHp);
+        let best=null,gap=0;
+        allies.forEach(a=>{
+          const need=a.maxHp-a.hp;
+          const d=Math.abs(a.y-u.y);
+          if(need>gap && d< u.range){gap=need;best=a;}
+        });
+        if(best && u.cooldown<=0){
+          u.cooldown=1.0;
+          best.hp=clamp(best.hp+Math.abs(u.atk),0,best.maxHp);
+          addFloat('+'+Math.abs(u.atk).toFixed(0),best.x,best.y-20,'#7fef8a');
+        }else if(!blocked){
+          u.y+=advanceDir*u.speed*dt;
+        }
+      }
+    }else{
+      if(!blocked){
+        u.y+=advanceDir*u.speed*dt;
+      }
+    }
+  });
+
+  // Projectiles
+  state.projectiles.forEach(p=>{
+    p.life-=dt;
+    p.x+=p.vx*dt;
+    p.y+=p.vy*dt;
+    if(p.life<=0)return;
+    const enemy=p.team==='P'?'E':'P';
+    const unitsHit=state.units.filter(u=>u.team===enemy && Math.hypot(u.x-p.x,u.y-p.y)<16);
+    if(unitsHit.length){
+      const t=unitsHit[0];
+      t.hp-=p.dmg;
+      addFloat('-'+p.dmg.toFixed(0),t.x,t.y-20,p.team==='P'?'#8cf':'#f99');
+      p.life=0;
+    }else{
+      // towers
+      const towers=(enemy==='E'?state.enemyTowers:state.playerTowers);
+      towers.forEach(t=>{
+        if(t.hp>0 && Math.hypot(t.x-p.x,t.y-p.y)<24){
+          t.hp-=p.dmg;
+          addFloat('-'+p.dmg.toFixed(0),t.x,t.y-26,'#ffb36a');
+          p.life=0;
+        }
+      });
+      // crystal
+      if(Math.hypot(state.crystal.x-p.x,state.crystal.y-p.y)<26 && state.crystal.hp>0){
+        state.crystal.hp-=p.dmg;
+        addFloat('-'+p.dmg.toFixed(0),state.crystal.x,state.crystal.y-26,'#b6f');
+        p.life=0;
+        if(state.crystal.hp<=0 && !state.crystal.owner){
+          state.crystal.owner=p.team;
+          if(p.team==='P'){
+            state.manaMax+=3;
+            state.manaRegen+=0.8;
+            showToast('Cristallo del Mana conquistato! Mana massimo +3.');
+          }else{
+            showToast('Il nemico ha preso il Cristallo!');
+          }
+        }
+      }
+    }
+  });
+
+  // cleanup
+  state.projectiles=state.projectiles.filter(p=>p.life>0);
+  state.units=state.units.filter(u=>u.hp>0 && u.y>40 && u.y<FIELD_H-40);
+  state.playerTowers.forEach(t=>{t.hp=Math.max(0,t.hp);});
+  state.enemyTowers.forEach(t=>{t.hp=Math.max(0,t.hp);});
+  if(state.crystal.hp<0)state.crystal.hp=0;
+
+  // crowns
+  state.playerCrowns=2-state.enemyTowers.filter(t=>t.hp>0).length;
+  state.enemyCrowns =2-state.playerTowers.filter(t=>t.hp>0).length;
+
+  if(state.playing && (state.playerTowers.every(t=>t.hp<=0) || state.enemyTowers.every(t=>t.hp<=0) || state.time>120)){
+    state.playing=false;
+    if(state.playerCrowns>state.enemyCrowns){
+      state.result='win';
+      profile.wins++;
+      profile.level=Math.min(50,profile.level+1);
+      ensureArenaUnlockCards();
+      saveProfile();
+      showToast('Vittoria! Tocca Riavvia per la prossima arena.');
+    }else if(state.playerCrowns<state.enemyCrowns){
+      state.result='lose';
+      showToast('Sconfitto! Tocca Riavvia per riprovare.');
+    }else{
+      state.result='draw';
+      showToast('Pareggio. Tocca Riavvia per riprovare.');
+    }
+    updateHUD();
+  }
+
+  // mana UI
+  const manaFill=document.getElementById('mana-fill');
+  manaFill.style.width=(state.mana/state.manaMax*100).toFixed(1)+'%';
+  refreshCardSelection();
+}
+
+// rendering
+function drawBackground(){
+  const a=state.arena;
+  ctx.save();
+  ctx.translate(offX,offY);
+  ctx.scale(scale,scale);
+  // base
+  ctx.fillStyle='#badc8f';
+  ctx.fillRect(0,0,VIRTUAL_W,FIELD_H);
+  // stripes per arena
+  const grad=ctx.createLinearGradient(0,0,VIRTUAL_W,0);
+  if(a.id===1){
+    grad.addColorStop(0,'#bfe3a3');
+    grad.addColorStop(0.5,'#d4f1af');
+    grad.addColorStop(1,'#c0e0ae');
+  }else if(a.id===2){
+    grad.addColorStop(0,'#f5d3c8');
+    grad.addColorStop(0.5,'#f9e0c9');
+    grad.addColorStop(1,'#e2c9f6');
+  }else{
+    grad.addColorStop(0,'#d3f0ff');
+    grad.addColorStop(0.5,'#e0f4ff');
+    grad.addColorStop(1,'#c7e0ff');
+  }
+  ctx.fillStyle=grad;
+  ctx.fillRect(0,0,VIRTUAL_W,FIELD_H);
+  // lanes
+  ctx.fillStyle='rgba(255,255,255,0.14)';
+  ctx.fillRect(0,0,VIRTUAL_W/3,FIELD_H);
+  ctx.fillRect(VIRTUAL_W/3*2,0,VIRTUAL_W/3,FIELD_H);
+  // grid
+  ctx.strokeStyle='rgba(0,0,0,0.06)';
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  for(let y=0;y<=FIELD_H;y+=80){ctx.moveTo(0,y);ctx.lineTo(VIRTUAL_W,y);}
+  for(let x=0;x<=VIRTUAL_W;x+=80){ctx.moveTo(x,0);ctx.lineTo(x,FIELD_H);}
+  ctx.stroke();
+  // river
+  const h=44;
+  const g=ctx.createLinearGradient(0,RIVER_Y-h/2,0,RIVER_Y+h/2);
+  g.addColorStop(0,'#b6e7ff');
+  g.addColorStop(0.5,'#6bc1ff');
+  g.addColorStop(1,'#4ca4e3');
+  ctx.fillStyle=g;
+  ctx.fillRect(0,RIVER_Y-h/2,VIRTUAL_W,h);
+  ctx.fillStyle='#b07431';
+  ctx.fillRect(0,RIVER_Y-h/2-6,VIRTUAL_W,6);
+  ctx.fillRect(0,RIVER_Y+h/2,VIRTUAL_W,6);
+  // bridges
+  function bridge(cx){
+    ctx.save();
+    ctx.translate(cx,RIVER_Y);
+    ctx.fillStyle='#b97a3c';
+    ctx.fillRect(-70,-18,140,36);
+    ctx.fillStyle='#8d5b28';
+    for(let i=-60;i<=60;i+=18){ctx.fillRect(i,-18,10,36);}
+    ctx.restore();
+  }
+  bridge(VIRTUAL_W*0.3);
+  bridge(VIRTUAL_W*0.7);
+  // selected lane highlight
+  ctx.fillStyle='rgba(47,128,237,0.15)';
+  ctx.fillRect(VIRTUAL_W/3*currentLane,0,VIRTUAL_W/3,FIELD_H);
+  ctx.restore();
+}
+function drawTower(t){
+  const friendly=t.team==='P';
+  ctx.save();
+  ctx.translate(t.x,t.y);
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(0,22,26,10,0,0,Math.PI*2);
+  ctx.fill();
+  // base
+  const bodyGrad=ctx.createLinearGradient(0,-20,0,24);
+  bodyGrad.addColorStop(0,'#f3f5ff');
+  bodyGrad.addColorStop(1,'#c7d0e2');
+  ctx.fillStyle=bodyGrad;
+  ctx.strokeStyle='#909cb2';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.roundRect(-26,-24,52,48,16);
+  ctx.fill();ctx.stroke();
+  // core
+  ctx.fillStyle=friendly?'#4fa3ff':'#ff7676';
+  ctx.beginPath();
+  ctx.arc(0,0,15,0,Math.PI*2);
+  ctx.fill();
+  // hp bar
+  const ratio=clamp(t.hp/t.maxHp,0,1);
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(-28,-32,56,6);
+  const hpGrad=ctx.createLinearGradient(-28,0,28,0);
+  hpGrad.addColorStop(0,'#6be675');
+  hpGrad.addColorStop(1,'#2bb15b');
+  ctx.fillStyle=hpGrad;
+  ctx.fillRect(-28,-32,56*ratio,6);
+  ctx.restore();
+}
+function drawUnit(u){
+  ctx.save();
+  ctx.translate(u.x,u.y);
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.25)';
+  ctx.beginPath();
+  ctx.ellipse(0,18,18,7,0,0,Math.PI*2);
+  ctx.fill();
+  // body
+  const hue=u.team==='P'?210:15;
+  const baseColor=u.type==='tank'?'#ff9b9b':u.type==='spark'?'#ffd15c':u.type==='healer'?'#7cd37c':'#9cc5ff';
+  ctx.fillStyle=baseColor;
+  ctx.beginPath();
+  ctx.roundRect(-14,-10,28,30,8);
+  ctx.fill();
+  // head
+  ctx.fillStyle='#ffe2c4';
+  ctx.beginPath();
+  ctx.arc(0,-8,9,0,Math.PI*2);
+  ctx.fill();
+  // face
+  ctx.fillStyle='#403428';
+  ctx.beginPath();ctx.arc(-3,-9,1.2,0,Math.PI*2);ctx.arc(3,-9,1.2,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(0,-5,2.2,0,Math.PI);ctx.strokeStyle='#403428';ctx.lineWidth=1;ctx.stroke();
+  // emblem
+  ctx.fillStyle='#444';
+  if(u.type==='spark'){
+    ctx.beginPath();ctx.moveTo(0,2);ctx.lineTo(7,10);ctx.lineTo(-7,10);ctx.closePath();ctx.fillStyle='#f7f7ff';ctx.fill();
+  }else if(u.type==='tank'){
+    ctx.fillStyle='#f7f7ff';ctx.fillRect(-6,4,12,8);
+  }else if(u.type==='healer'){
+    ctx.fillStyle='#f7f7ff';
+    ctx.fillRect(-2,4,4,8);
+    ctx.fillRect(-6,6,12,4);
+  }else{
+    ctx.fillStyle='#f7f7ff';ctx.beginPath();ctx.arc(0,8,4,0,Math.PI*2);ctx.fill();
+  }
+  // hp bar
+  const ratio=clamp(u.hp/u.maxHp,0,1);
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(-14,-22,28,4);
+  const hpGrad=ctx.createLinearGradient(-14,0,14,0);
+  hpGrad.addColorStop(0,'#7af07a');hpGrad.addColorStop(1,'#40c15b');
+  ctx.fillStyle=hpGrad;
+  ctx.fillRect(-14,-22,28*ratio,4);
+  ctx.restore();
+}
+function drawCrystal(c){
+  ctx.save();
+  ctx.translate(c.x,c.y);
+  ctx.fillStyle='rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(0,18,20,8,0,0,Math.PI*2);ctx.fill();
+  const grad=ctx.createLinearGradient(0,-26,0,10);
+  grad.addColorStop(0,'#f4e7ff');
+  grad.addColorStop(0.4,'#c48bff');
+  grad.addColorStop(1,'#5c3cff');
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  ctx.moveTo(0,-26);
+  ctx.lineTo(18,0);
+  ctx.lineTo(0,18);
+  ctx.lineTo(-18,0);
+  ctx.closePath();
+  ctx.fill();
+  // hp bar
+  const ratio=clamp(c.hp/c.maxHp,0,1);
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(-20,-32,40,5);
+  const g=ctx.createLinearGradient(-20,0,20,0);
+  g.addColorStop(0,'#d6b2ff');g.addColorStop(1,'#9e6cff');
+  ctx.fillStyle=g;
+  ctx.fillRect(-20,-32,40*ratio,5);
+  ctx.restore();
+}
+function drawProjectiles(){
+  state.projectiles.forEach(p=>{
+    ctx.save();
+    ctx.translate(p.x,p.y);
+    const trailGrad=ctx.createLinearGradient(-p.vx*0.05,-p.vy*0.05,0,0);
+    trailGrad.addColorStop(0,'rgba(255,255,255,0)');
+    trailGrad.addColorStop(1,p.color);
+    ctx.strokeStyle=trailGrad;
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.moveTo(-p.vx*0.05,-p.vy*0.05);
+    ctx.lineTo(0,0);
+    ctx.stroke();
+    ctx.fillStyle=p.color;
+    ctx.beginPath();ctx.arc(0,0,3,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  });
+}
+function drawFloats(){
+  state.floats.forEach(f=>{
+    f.age+=1/60;
+    f.y+=f.vy/60;
+    ctx.save();
+    ctx.globalAlpha=clamp(1-f.age,0,1);
+    ctx.fillStyle=f.color||'#fff';
+    ctx.font='12px system-ui';
+    ctx.textAlign='center';
+    ctx.fillText(f.text,f.x,f.y);
+    ctx.restore();
+  });
+  state.floats=state.floats.filter(f=>f.age<1.2);
+}
+function render(){
+  ctx.save();
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width/DPR,canvas.height/DPR);
+  ctx.restore();
+  ctx.save();
+  ctx.translate(offX,offY);
+  ctx.scale(scale,scale);
+  drawBackground();
+  // towers
+  state.enemyTowers.forEach(drawTower);
+  state.playerTowers.forEach(drawTower);
+  // crystal
+  if(state.crystal.hp>0)drawCrystal(state.crystal);
+  // units
+  state.units.sort((a,b)=>a.y-b.y);
+  state.units.forEach(drawUnit);
+  // projectiles & floats
+  drawProjectiles();
+  drawFloats();
+  ctx.restore();
+}
+
+// initial
+newMatch();
+</script>
 </body>
 </html>
