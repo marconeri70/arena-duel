@@ -1,65 +1,60 @@
 <!doctype html>
 <html lang="it">
 <head>
-  <meta charset="utf-8" />
-  <title>Arena Duel PWA</title>
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <meta name="theme-color" content="#020617" />
+<meta charset="utf-8">
 
-  <!-- Manifest PWA -->
-  <link rel="manifest" href="manifest.webmanifest" />
+<!-- Layout e viewport -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      background: #020617;
-      overflow: hidden;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    #gameCanvas {
-      position: fixed;
-      inset: 0;
-      width: 100vw;
-      height: 100vh;
-      touch-action: none;
-      -webkit-tap-highlight-color: transparent;
-      display: block;
-    }
-    .install-hint {
-      position: fixed;
-      bottom: 8px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(15,23,42,0.92);
-      color: #e5e7eb;
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 11px;
-      border: 1px solid rgba(148,163,184,0.4);
-      pointer-events: none;
-      z-index: 10;
-    }
-  </style>
+<title>Arena Duel – PWA</title>
+
+<!-- Manifest per installazione come app -->
+<link rel="manifest" href="manifest.webmanifest">
+
+<!-- Icone base -->
+<link rel="icon" href="assets/icon-192.png">
+
+<style>
+  html, body {
+    margin:0;
+    padding:0;
+    height:100%;
+    background:#0f1115;
+    overflow:hidden;
+  }
+
+  #gameCanvas {
+    position:fixed;
+    inset:0;
+    width:100vw;
+    height:100vh;
+    display:block;
+    background:#0f1115;
+    touch-action:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  /* Nasconde le scrollbar */
+  ::-webkit-scrollbar {
+    display:none;
+  }
+</style>
+
 </head>
 <body>
-  <canvas id="gameCanvas"></canvas>
-  <div class="install-hint">
-    Tocca ⋮ → "Aggiungi a schermata Home" per installare il gioco
-  </div>
 
-  <script src="game.js"></script>
-  <script>
-    // Registrazione Service Worker per PWA
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').catch(err => {
-          console.warn('Service worker non registrato:', err);
-        });
-      });
-    }
-  </script>
+<!-- Canvas del gioco -->
+<canvas id="gameCanvas"></canvas>
+
+<!-- Motore di gioco -->
+<script src="game.js"></script>
+
+<!-- Installa Service Worker -->
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+}
+</script>
+
 </body>
 </html>
