@@ -1,758 +1,1397 @@
 <!doctype html>
 <html lang="it">
 <head>
-  <meta charset="utf-8">
-  <title>Arena Duel – Proto pulito</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <meta name="theme-color" content="#05070b">
-  <link rel="manifest" href="manifest.webmanifest">
+  <meta charset="utf-8" />
+  <title>Arena Duel – Vertical</title>
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#020617" />
+  <link rel="manifest" href="manifest.webmanifest" />
   <style>
-    html,body{
-      margin:0;
-      padding:0;
-      height:100%;
-      background:#05070b;
-      color:#fff;
-      font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      overscroll-behavior:none;
-      touch-action:none;
+    :root {
+      color-scheme: dark;
     }
-    body{
-      display:flex;
-      align-items:stretch;
-      justify-content:stretch;
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
     }
-    canvas{
-      flex:1;
-      display:block;
-      width:100%;
-      height:100%;
-      touch-action:none;
-      -webkit-tap-highlight-color:transparent;
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #020617;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      touch-action: none;
     }
   </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+
 <script>
-// ===================== Costanti logiche =====================
-const LOGICAL_W = 720;
-const LOGICAL_H = 1280;
-const UI_H      = 180;
-const FIELD_H   = LOGICAL_H - UI_H;
-const LANES_X   = [LOGICAL_W * 0.2, LOGICAL_W * 0.5, LOGICAL_W * 0.8];
-const RIVER_Y   = FIELD_H * 0.5;
-
+// ======================= Canvas & mapping (portrait) =========================
 const canvas = document.getElementById('game');
-const ctx    = canvas.getContext('2d', { alpha:false });
+const ctx = canvas.getContext('2d', { alpha: false });
 
-let scale = 1, offX = 0, offY = 0;
+const W = 720;
+const H = 1280;
+const TOP_UI = 40;
+const BOTTOM_UI = 190;
+const FIELD_H = H - TOP_UI - BOTTOM_UI;
 
-// ===================== Resize & mapping =====================
+let scale = 1;
+let offX = 0;
+let offY = 0;
+
 function resize() {
   const rect = canvas.getBoundingClientRect();
-  const dpr  = window.devicePixelRatio || 1;
+  const dpr = window.devicePixelRatio || 1;
   canvas.width  = Math.max(1, Math.round(rect.width  * dpr));
   canvas.height = Math.max(1, Math.round(rect.height * dpr));
-
-  scale = Math.min(canvas.width / LOGICAL_W, canvas.height / LOGICAL_H);
-  offX  = Math.round((canvas.width  - LOGICAL_W * scale) / 2);
-  offY  = Math.round((canvas.height - LOGICAL_H * scale) / 2);
+  scale = Math.min(canvas.width / W, canvas.height / H);
+  offX  = Math.floor((canvas.width  - W * scale) / 2);
+  offY  = Math.floor((canvas.height - H * scale) / 2);
 }
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', resize);
 resize();
 
-function toGameCoords(clientX, clientY){
+function toLogical(ev) {
   const rect = canvas.getBoundingClientRect();
-  const px = (clientX - rect.left) * (canvas.width  / rect.width);
-  const py = (clientY - rect.top)  * (canvas.height / rect.height);
+  const X = (ev.clientX - rect.left) * (canvas.width  / rect.width);
+  const Y = (ev.clientY - rect.top ) * (canvas.height / rect.height);
   return {
-    x: (px - offX) / scale,
-    y: (py - offY) / scale
+    x: (X - offX) / scale,
+    y: (Y - offY) / scale
   };
 }
 
-// ===================== Stato di gioco =====================
-const CARDS = [
-  { key:'scout',  label:'Scout',  cost:3, color:'#4fc3f7' },
-  { key:'spark',  label:'Spark',  cost:2, color:'#ffe082' },
-  { key:'tank',   label:'Tank',   cost:4, color:'#ffab91' },
-  { key:'healer', label:'Healer', cost:3, color:'#a5d6a7' },
-  { key:'reset',  label:'Riavvia',cost:0, color:'#cfd8dc' }
+// ============================ Helpers ========================================
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const rand   = (a, b) => a + Math.random() * (b - a);
+
+// click-targets per menu, carte, ecc.
+let hitZones = [];
+function clearHitZones() { hitZones = []; }
+function addHitZone(x, y, w, h, onClick) {
+  hitZones.push({ x, y, w, h, onClick });
+}
+canvas.addEventListener('pointerdown', ev => {
+  const p = toLogical(ev);
+  for (const z of hitZones) {
+    if (p.x >= z.x && p.x <= z.x + z.w &&
+        p.y >= z.y && p.y <= z.y + z.h) {
+      z.onClick();
+      return;
+    }
+  }
+  // se nessun bottone intercettato, gestisco lo schermo di gioco
+  if (screen === 'play') handlePlayTap(p.x, p.y);
+});
+
+function softShadow(x, y, rx, ry, alpha = 0.22) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ====================== Profilo & progressi (localStorage) ===================
+let profile = loadProfile();
+
+function loadProfile() {
+  try {
+    const raw = localStorage.getItem('arenaDuelProfile_v1');
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return {
+    wins: 0,
+    losses: 0,
+    draws: 0,
+    arenaId: 'meadow',
+    deck: ['scout', 'spark', 'tank', 'healer'] // 4 carte base
+  };
+}
+function saveProfile() {
+  try {
+    localStorage.setItem('arenaDuelProfile_v1', JSON.stringify(profile));
+  } catch (e) {}
+}
+
+// ============================== Arene ========================================
+
+const LANES_X = [W * 0.2, W * 0.5, W * 0.8];
+
+const ARENAS = [
+  {
+    id: 'meadow',
+    name: 'Prato Tranquillo',
+    difficulty: 1,
+    bgTop: '#1f2933',
+    grassLight: '#d7f3c8',
+    grassDark: '#b7d79f'
+  },
+  {
+    id: 'desert',
+    name: 'Dune del Sole',
+    difficulty: 2,
+    bgTop: '#251f1b',
+    grassLight: '#f3e0b6',
+    grassDark: '#ddb771'
+  },
+  {
+    id: 'volcano',
+    name: 'Valle della Lava',
+    difficulty: 3,
+    bgTop: '#1b1020',
+    grassLight: '#f1d0c5',
+    grassDark: '#d19788'
+  }
+];
+function currentArena() {
+  return ARENAS.find(a => a.id === profile.arenaId) || ARENAS[0];
+}
+
+// ============================== Carte ========================================
+
+const CARD_DATA = [
+  {
+    id: 'scout',
+    name: 'Scout',
+    desc: 'Fan­teria veloce corpo a corpo.',
+    cost: 3,
+    unlockWins: 0,
+    color: '#60a5fa',
+    type: 'melee',
+    hp: 22,
+    atk: 4,
+    spd: 1.2,
+    range: 26
+  },
+  {
+    id: 'spark',
+    name: 'Spark',
+    desc: 'Unità a distanza rapida.',
+    cost: 2,
+    unlockWins: 0,
+    color: '#fbbf24',
+    type: 'ranged',
+    hp: 16,
+    atk: 5,
+    spd: 1.0,
+    range: 120
+  },
+  {
+    id: 'tank',
+    name: 'Tank',
+    desc: 'Pesante, tanta vita.',
+    cost: 4,
+    unlockWins: 2,
+    color: '#fb7185',
+    type: 'melee',
+    hp: 60,
+    atk: 6,
+    spd: 0.7,
+    range: 30
+  },
+  {
+    id: 'healer',
+    name: 'Healer',
+    desc: 'Support, cura alleati.',
+    cost: 3,
+    unlockWins: 4,
+    color: '#34d399',
+    type: 'healer',
+    hp: 20,
+    atk: -6,
+    spd: 1.0,
+    range: 100
+  }
+  // in futuro puoi aggiungere altre carte qui
 ];
 
-let cardRects = [];
-let selectedLane = 1;
-let manaFlash = 0;
+function unlockedCards() {
+  return CARD_DATA.filter(c => profile.wins >= c.unlockWins);
+}
 
-const state = {
-  playing: true,
-  time: 0,
-  mana: 5,
-  manaMax: 10,
-  manaRegen: 1.2, // al secondo
-  enemyMana: 5,
-  enemyManaRegen: 1.0,
-  crownsYou: 0,
-  crownsEnemy: 0,
-  playerTowers: [
-    { x: LOGICAL_W*0.25, y: FIELD_H-110, hp:100, maxHp:100 },
-    { x: LOGICAL_W*0.75, y: FIELD_H-110, hp:100, maxHp:100 }
-  ],
-  enemyTowers: [
-    { x: LOGICAL_W*0.25, y: 110, hp:100, maxHp:100 },
-    { x: LOGICAL_W*0.75, y: 110, hp:100, maxHp:100 }
-  ],
-  units: [],     // {team:'player'|'enemy', lane, x,y,dir, type, hp,maxHp,atk,range,spd,cooldown,rate}
-  projectiles: [], // {team, x,y,vx,vy,damage,heal,life,colorA,colorB}
-  manaCrystal: {
-    x: LOGICAL_W * 0.5,
-    y: RIVER_Y,
-    hp: 40,
-    maxHp: 40,
-    alive: true,
-    lastHitBy: null // 'player' o 'enemy'
+function cardById(id) {
+  return CARD_DATA.find(c => c.id === id);
+}
+
+// ============================= Audio SFX =====================================
+let AC = null;
+function sfx(kind) {
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const osc = AC.createOscillator();
+    const gain = AC.createGain();
+    const table = {
+      hit:   [220, 0.06, 'square'],
+      place: [660, 0.07, 'square'],
+      win:   [880, 0.4,  'triangle'],
+      lose:  [160, 0.4,  'triangle'],
+      mana:  [520, 0.15, 'sine']
+    };
+    const [f, t, type] = table[kind] || [440, 0.08, 'square'];
+    osc.type = type;
+    osc.frequency.value = f;
+    gain.gain.value = 0.06;
+    osc.connect(gain);
+    gain.connect(AC.destination);
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + t);
+    osc.stop(AC.currentTime + t);
+  } catch (e) {}
+}
+
+// ========================== Stato partita ====================================
+
+let screen = 'menu'; // 'menu' | 'play' | 'cards' | 'arenas'
+
+let battle = null;
+
+function newBattle() {
+  const arena = currentArena();
+  const baseManaMax = 10 + (arena.difficulty - 1) * 2;
+
+  battle = {
+    arenaId: arena.id,
+    time: 0,
+    playing: true,
+    resultShown: false,
+    selectedLane: 1,
+    manaP: 5,
+    manaE: 5,
+    manaMaxP: baseManaMax,
+    manaMaxE: baseManaMax,
+    manaRegen: 0.016, // per tick
+    units: [],
+    projectiles: [],
+    floats: [],
+    particles: [],
+    playerTowers: [
+      { team: 'P', x: LANES_X[0], y: TOP_UI + FIELD_H - 70, hp: 120, maxHp: 120 },
+      { team: 'P', x: LANES_X[2], y: TOP_UI + FIELD_H - 70, hp: 120, maxHp: 120 }
+    ],
+    enemyTowers: [
+      { team: 'E', x: LANES_X[0], y: TOP_UI + 70, hp: 120, maxHp: 120 },
+      { team: 'E', x: LANES_X[2], y: TOP_UI + 70, hp: 120, maxHp: 120 }
+    ],
+    crystal: {
+      x: W * 0.5,
+      y: TOP_UI + FIELD_H * 0.5,
+      hp: 80,
+      maxHp: 80,
+      alive: true,
+      owner: null, // 'P' o 'E'
+      bonusShown: false
+    },
+    crowns: { you: 0, enemy: 0 },
+    message: ''
+  };
+}
+
+function laneBounds(idx) {
+  const full = W / 3;
+  return {
+    x: idx * full,
+    w: full
+  };
+}
+
+function addFloat(text, x, y, color) {
+  battle.floats.push({ text, x, y, color, t: 0 });
+}
+
+function addParticles(x, y, color) {
+  for (let i = 0; i < 10; i++) {
+    battle.particles.push({
+      x, y,
+      vx: rand(-1, 1),
+      vy: rand(-1.5, -0.4),
+      life: rand(0.3, 0.6),
+      t: 0,
+      color
+    });
   }
-};
+}
 
-// ===================== Utilità =====================
-function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+function damage(target, amount) {
+  if (!target || target.hp == null) return;
+  target.hp -= amount;
+  const txt = '-' + amount;
+  addFloat(txt, target.x, target.y - 24, '#fecaca');
+  addParticles(target.x, target.y - 10, '#f97373');
+  sfx('hit');
+}
 
-function spawnUnit(team, laneIndex, key){
+function heal(target, amount) {
+  if (!target || target.hp == null) return;
+  const before = target.hp;
+  target.hp = Math.min(target.maxHp, target.hp + amount);
+  const diff = Math.round(target.hp - before);
+  if (diff > 0) {
+    addFloat('+' + diff, target.x, target.y - 24, '#bbf7d0');
+  }
+}
+
+// =========================== Unità & proiettili ==============================
+
+function spawnUnit(team, laneIndex, cardId) {
+  const card = cardById(cardId);
+  if (!card) return;
+
+  const isPlayer = team === 'P';
   const laneX = LANES_X[laneIndex];
-  const dir   = (team === 'player') ? -1 : 1;
-  const y0    = (team === 'player') ? (FIELD_H - 160) : 160;
+  const startY = isPlayer ? (TOP_UI + FIELD_H - 110) : (TOP_UI + 110);
+  const dir = isPlayer ? -1 : 1;
 
-  const base = {
+  const u = {
     team,
     lane: laneIndex,
     x: laneX,
-    y: y0,
+    y: startY,
     dir,
-    cooldown: 0,
+    type: card.type,
+    color: card.color,
+    hp: card.hp,
+    maxHp: card.hp,
+    atk: Math.abs(card.atk),
+    heal: card.type === 'healer',
+    spd: card.spd,
+    range: card.range,
     rate: 1.0,
-    range: 32,
-    hp: 20,
-    maxHp: 20,
-    atk: 4,
-    spd: 60,
-    type: key
+    cd: 0
   };
-
-  if(key === 'scout'){
-    base.spd = 80; base.hp = base.maxHp = 18; base.atk = 3; base.range = 26; base.rate = 0.7;
-  }else if(key === 'spark'){
-    base.spd = 55; base.hp = base.maxHp = 14; base.atk = 7; base.range = 110; base.rate = 0.9;
-  }else if(key === 'tank'){
-    base.spd = 40; base.hp = base.maxHp = 60; base.atk = 6; base.range = 30; base.rate = 1.2;
-  }else if(key === 'healer'){
-    base.spd = 60; base.hp = base.maxHp = 18; base.atk = -6; base.range = 90; base.rate = 1.0;
-  }
-
-  state.units.push(base);
+  battle.units.push(u);
+  addParticles(u.x, u.y, isPlayer ? '#60a5fa' : '#fb7185');
+  sfx('place');
 }
 
-function launchProjectile(from, target, opts){
+function fireProjectile(from, target, opts) {
   const dx = target.x - from.x;
   const dy = target.y - from.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const speed = opts.speed || 260;
-  state.projectiles.push({
-    team: opts.team,
+  const L = Math.hypot(dx, dy) || 1;
+  const speed = opts.speed || 520;
+  const vx = (dx / L) * speed;
+  const vy = (dy / L) * speed;
+
+  battle.projectiles.push({
     x: from.x,
     y: from.y,
-    vx: dx / dist * speed,
-    vy: dy / dist * speed,
-    damage: opts.damage || 0,
-    heal: opts.heal || 0,
-    life: 1.2,
-    colorA: opts.colorA || '#ffffff',
-    colorB: opts.colorB || '#81d4fa'
+    vx,
+    vy,
+    team: opts.team,
+    heal: !!opts.heal,
+    dmg: opts.dmg || 5,
+    life: 1.5,
+    colorA: opts.colorA || '#fff',
+    colorB: opts.colorB || '#0af'
   });
 }
 
-// ===================== Input =====================
-function onPointerStart(ev){
-  ev.preventDefault();
-  const touch = ev.touches ? ev.touches[0] : ev;
-  const pos = toGameCoords(touch.clientX, touch.clientY);
-  if(isNaN(pos.x) || isNaN(pos.y)) return;
+function nearestEnemyAhead(u) {
+  const enemyTeam = u.team === 'P' ? 'E' : 'P';
+  let best = null;
+  let bestScore = 99999;
 
-  if(pos.y < 0 || pos.y > LOGICAL_H) return;
-
-  if(pos.y < FIELD_H){
-    // Seleziona corsia
-    let best = 0, bestD = Infinity;
-    for(let i=0;i<LANES_X.length;i++){
-      const d = Math.abs(pos.x - LANES_X[i]);
-      if(d < bestD){ bestD = d; best = i; }
+  // unità
+  for (const v of battle.units) {
+    if (v.team !== enemyTeam || v.lane !== u.lane) continue;
+    const dy = (v.y - u.y) * u.dir;
+    if (dy <= 0) continue; // deve essere davanti
+    const score = dy;
+    if (score < bestScore) {
+      bestScore = score;
+      best = v;
     }
-    selectedLane = best;
-  } else {
-    // Tocca le carte
-    for(let i=0;i<cardRects.length;i++){
-      const r = cardRects[i];
-      if(pos.x >= r.x && pos.x <= r.x+r.w && pos.y >= r.y && pos.y <= r.y+r.h){
-        handleCardClick(i);
-        break;
+  }
+  // torri
+  const towers = enemyTeam === 'P' ? battle.playerTowers : battle.enemyTowers;
+  for (const t of towers) {
+    const dy = (t.y - u.y) * u.dir;
+    if (dy <= 0) continue;
+    const dx = Math.abs(t.x - u.x);
+    const score = dy + dx * 0.25;
+    if (score < bestScore) {
+      bestScore = score;
+      best = t;
+    }
+  }
+  // cristallo (solo corsia centrale)
+  if (battle.crystal.alive && u.lane === 1) {
+    const c = battle.crystal;
+    const dy = (c.y - u.y) * u.dir;
+    if (dy > 0) {
+      const score = dy;
+      if (score < bestScore) {
+        bestScore = score;
+        best = c;
       }
     }
   }
+
+  const dist = best ? Math.hypot(best.x - u.x, best.y - u.y) : 99999;
+  return { target: best, dist };
 }
 
-canvas.addEventListener('mousedown', onPointerStart);
-canvas.addEventListener('touchstart', onPointerStart, { passive:false });
-
-function handleCardClick(index){
-  const card = CARDS[index];
-  if(!card) return;
-
-  if(card.key === 'reset'){
-    resetMatch();
-    return;
+function nearestAllyAhead(u) {
+  let best = null;
+  let bestDy = 99999;
+  for (const v of battle.units) {
+    if (v === u || v.team !== u.team || v.lane !== u.lane) continue;
+    const dy = (v.y - u.y) * u.dir;
+    if (dy <= 0) continue; // deve essere davanti
+    if (dy < bestDy) {
+      bestDy = dy;
+      best = v;
+    }
   }
-
-  if(!state.playing) return;
-
-  if(state.mana < card.cost){
-    manaFlash = 0.4;
-    return;
-  }
-
-  state.mana -= card.cost;
-  spawnUnit('player', selectedLane, card.key);
+  return { ally: best, dist: bestDy };
 }
 
-// ===================== AI semplice =====================
+// IA semplice per l'avversario
 let aiTimer = 2.0;
-function enemyAI(dt){
-  if(!state.playing) return;
+function aiTick(dt) {
   aiTimer -= dt;
-  if(aiTimer > 0) return;
-  aiTimer = 1.6 + Math.random()*1.6;
+  if (!battle.playing) return;
+  if (aiTimer > 0) return;
 
-  // sceglie una carta che può permettersi
-  const affordable = CARDS.filter(c => c.key!=='reset' && state.enemyMana >= c.cost);
-  if(!affordable.length) return;
-  const card = affordable[Math.floor(Math.random()*affordable.length)];
-  const lane = Math.floor(Math.random()*LANES_X.length);
-  state.enemyMana -= card.cost;
-  spawnUnit('enemy', lane, card.key);
+  const arena = currentArena();
+  const diff = arena.difficulty;
+  aiTimer = rand(1.4, 2.4) - diff * 0.3;
+
+  const mana = battle.manaE;
+  const possible = CARD_DATA.filter(c => mana >= c.cost && profile.wins >= c.unlockWins);
+  if (!possible.length) return;
+  const card = possible[(Math.random() * possible.length) | 0];
+
+  battle.manaE = Math.max(0, battle.manaE - card.cost);
+  const lane = (Math.random() * 3) | 0;
+  spawnUnit('E', lane, card.id);
 }
 
-// ===================== Update logica =====================
-function update(dt){
-  state.time += dt;
+// ========================= Update della partita ==============================
 
-  if(state.playing){
-    state.mana      = clamp(state.mana      + state.manaRegen      * dt, 0, state.manaMax);
-    state.enemyMana = clamp(state.enemyMana + state.enemyManaRegen * dt, 0, state.manaMax);
-    enemyAI(dt);
+function updateBattle(dt) {
+  if (!battle) return;
+  if (battle.playing) {
+    battle.time += dt;
+    const arena = currentArena();
+
+    // mana
+    const regen = battle.manaRegen * (1 + (arena.difficulty - 1) * 0.3);
+    battle.manaP = clamp(battle.manaP + regen * 60 * dt, 0, battle.manaMaxP);
+    battle.manaE = clamp(battle.manaE + regen * 60 * dt, 0, battle.manaMaxE);
+
+    // IA
+    aiTick(dt);
   }
 
-  if(manaFlash > 0) manaFlash -= dt;
+  // unità
+  const minGap = 55;
 
-  // Unità
-  const units = state.units;
-  const pTowers = state.playerTowers;
-  const eTowers = state.enemyTowers;
+  for (const u of battle.units) {
+    u.cd -= dt;
 
-  for(const u of units){
-    if(!state.playing) continue;
-    u.cooldown -= dt;
+    const { target, dist } = nearestEnemyAhead(u);
 
-    const enemyTeam = (u.team === 'player') ? 'enemy' : 'player';
-    const forwardSign = (u.team === 'player') ? -1 : 1;
+    // Healer: cura alleati o torri
+    if (u.type === 'healer') {
+      // trova alleato più danneggiato in raggio
+      let best = null;
+      let bestGap = 0;
 
-    // possibili bersagli sulla stessa corsia: altre unità + torri nemiche + cristallo centrale
-    const foes = [];
-    for(const v of units){
-      if(v.team !== enemyTeam) continue;
-      if(v.lane !== u.lane) continue;
-      foes.push(v);
-    }
-    const towers = (enemyTeam === 'enemy' ? eTowers : pTowers);
-    for(const t of towers){
-      foes.push(t);
-    }
-    if(state.manaCrystal.alive && u.lane === 1){
-      foes.push(state.manaCrystal);
-    }
-
-    // trova bersaglio più vicino in avanti
-    let target = null;
-    let bestDist = Infinity;
-    for(const f of foes){
-      const dy = (f.y - u.y) * forwardSign;
-      if(dy <= -8) continue; // dietro di lui
-      const dx = Math.abs(f.x - u.x);
-      const dist = Math.hypot(dx, dy);
-      if(dist < bestDist){
-        bestDist = dist;
-        target = f;
-      }
-    }
-
-    if(target && bestDist <= u.range){
-      // attacco
-      if(u.cooldown <= 0){
-        u.cooldown = u.rate;
-        if(u.type === 'spark' || u.type === 'healer'){
-          // attacco a distanza / cura
-          const heal = u.atk < 0 ? -u.atk : 0;
-          const dmg  = u.atk > 0 ?  u.atk : 0;
-          launchProjectile(u, target, {
-            team: u.team,
-            damage: dmg,
-            heal: heal,
-            colorA: (heal>0?'#a5d6a7':'#fff59d'),
-            colorB: (u.team==='player'?'#81d4fa':'#ffab91'),
-            speed: 320
-          });
-        } else {
-          // melee: danno diretto
-          applyDamage(target, u.atk, u.team);
+      for (const v of battle.units) {
+        if (v.team !== u.team || v.hp >= v.maxHp) continue;
+        if (v.lane !== u.lane) continue;
+        const d = Math.hypot(v.x - u.x, v.y - u.y);
+        const gap = v.maxHp - v.hp;
+        if (d <= u.range && gap > bestGap) {
+          bestGap = gap;
+          best = v;
         }
       }
-    } else if(state.playing) {
-      // movimento
-      u.y += u.spd * u.dir * dt;
+      const towers = u.team === 'P' ? battle.playerTowers : battle.enemyTowers;
+      for (const t of towers) {
+        if (t.hp >= t.maxHp) continue;
+        const d = Math.hypot(t.x - u.x, t.y - u.y);
+        const gap = t.maxHp - t.hp;
+        if (d <= u.range && gap > bestGap) {
+          bestGap = gap;
+          best = t;
+        }
+      }
+
+      if (best && u.cd <= 0 && battle.playing) {
+        u.cd = u.rate;
+        fireProjectile(u, best, {
+          team: u.team,
+          heal: true,
+          dmg: u.atk,
+          speed: 380,
+          colorA: '#bbf7d0',
+          colorB: '#4ade80'
+        });
+      } else if (battle.playing) {
+        // movimento con "fila" (no sorpasso)
+        const { ally, dist: dAlly } = nearestAllyAhead(u);
+        let canMove = true;
+        if (ally && dAlly < minGap) canMove = false;
+
+        if (canMove) {
+          u.y += u.spd * u.dir * 60 * dt;
+        }
+      }
+
+      continue;
+    }
+
+    // ranged
+    if (u.type === 'ranged') {
+      if (target && dist <= u.range && battle.playing) {
+        if (u.cd <= 0) {
+          u.cd = u.rate;
+          fireProjectile(u, target, {
+            team: u.team,
+            heal: false,
+            dmg: u.atk,
+            speed: 520,
+            colorA: '#e5f0ff',
+            colorB: u.team === 'P' ? '#60a5fa' : '#fb7185'
+          });
+        }
+      } else if (battle.playing) {
+        const { ally, dist: dAlly } = nearestAllyAhead(u);
+        let canMove = true;
+        if (ally && dAlly < minGap) canMove = false;
+        if (canMove) {
+          u.y += u.spd * u.dir * 60 * dt;
+        }
+      }
+      continue;
+    }
+
+    // melee
+    if (target && dist <= u.range && battle.playing) {
+      if (u.cd <= 0) {
+        u.cd = u.rate;
+        damage(target, u.atk);
+      }
+    } else if (battle.playing) {
+      const { ally, dist: dAlly } = nearestAllyAhead(u);
+      let canMove = true;
+      if (ally && dAlly < minGap) canMove = false;
+      if (canMove) {
+        u.y += u.spd * u.dir * 60 * dt;
+      }
     }
   }
 
   // proiettili
-  for(const p of state.projectiles){
+  for (const p of battle.projectiles) {
     p.life -= dt;
     p.x += p.vx * dt;
     p.y += p.vy * dt;
-    if(p.life <= 0) continue;
+    if (p.life <= 0) continue;
 
-    const enemyTeam = (p.team === 'player') ? 'enemy' : 'player';
+    const enemyTeam = p.heal ? p.team : (p.team === 'P' ? 'E' : 'P');
+    const isHeal = p.heal;
 
-    // collisione con unità
+    // unità
     let hit = null;
-    for(const u of units){
-      if((p.heal > 0 && u.team === p.team) || (p.damage > 0 && u.team === enemyTeam)){
-        const d = Math.hypot(u.x - p.x, u.y - p.y);
-        if(d < 18){
-          hit = u; break;
-        }
-      }
+    for (const u of battle.units) {
+      const good = isHeal ? (u.team === p.team) : (u.team === enemyTeam);
+      if (!good) continue;
+      const d = Math.hypot(u.x - p.x, u.y - p.y);
+      if (d < 18) { hit = u; break; }
     }
-    if(!hit){
-      // collisione con torri / cristallo
-      const towerList = (p.damage > 0)
-        ? (enemyTeam === 'enemy' ? eTowers : pTowers)
-        : (p.team === 'player' ? pTowers : eTowers);
-      for(const t of towerList){
+
+    // torri
+    if (!hit) {
+      const towers = isHeal
+        ? (p.team === 'P' ? battle.playerTowers : battle.enemyTowers)
+        : (p.team === 'P' ? battle.enemyTowers : battle.playerTowers);
+      for (const t of towers) {
         const d = Math.hypot(t.x - p.x, t.y - p.y);
-        if(d < 24){ hit = t; break; }
-      }
-      if(!hit && state.manaCrystal.alive){
-        const d = Math.hypot(state.manaCrystal.x - p.x, state.manaCrystal.y - p.y);
-        if(d < 28){ hit = state.manaCrystal; }
+        if (d < 26) { hit = t; break; }
       }
     }
-    if(hit){
-      if(p.heal > 0){
-        hit.hp = clamp(hit.hp + p.heal, 0, hit.maxHp || 100);
-      }
-      if(p.damage > 0){
-        applyDamage(hit, p.damage, p.team);
-      }
+
+    // cristallo
+    if (!hit && battle.crystal.alive) {
+      const d = Math.hypot(battle.crystal.x - p.x, battle.crystal.y - p.y);
+      if (d < 30) hit = battle.crystal;
+    }
+
+    if (hit) {
+      if (isHeal) heal(hit, p.dmg);
+      else damage(hit, p.dmg);
       p.life = 0;
-    }
-  }
 
-  // pulizia
-  state.projectiles = state.projectiles.filter(p => p.life > 0);
-  state.units = state.units.filter(u => u.hp > 0 && u.y > 20 && u.y < FIELD_H - 20);
-
-  // vittoria/sconfitta
-  const pAlive = state.playerTowers.filter(t=>t.hp>0).length;
-  const eAlive = state.enemyTowers.filter(t=>t.hp>0).length;
-  state.crownsYou   = 2 - eAlive;
-  state.crownsEnemy = 2 - pAlive;
-
-  if(state.playing){
-    if(eAlive === 0){
-      state.playing = false;
-      endBanner = 'Vittoria!';
-    }else if(pAlive === 0){
-      state.playing = false;
-      endBanner = 'Sconfitta';
-    }
-  }
-}
-
-// ===================== Danno =====================
-function applyDamage(target, dmg, fromTeam){
-  if(!target || dmg <= 0) return;
-  target.hp = (target.hp || target.maxHp) - dmg;
-  if(target === state.manaCrystal){
-    state.manaCrystal.lastHitBy = fromTeam;
-    if(target.hp <= 0 && target.alive){
-      target.alive = false;
-      // bonus mana
-      if(fromTeam === 'player'){
-        state.mana = clamp(state.mana + 5, 0, state.manaMax);
-      }else{
-        state.enemyMana = clamp(state.enemyMana + 5, 0, state.manaMax);
+      // bonus cristallo
+      if (hit === battle.crystal && hit.hp <= 0 && hit.alive) {
+        hit.alive = false;
+        hit.owner = p.team;
+        battle.message = (p.team === 'P'
+          ? 'Hai distrutto il Cristallo del Mana! Mana massimo +3.'
+          : 'Il nemico ha distrutto il Cristallo del Mana!');
+        addFloat('MANA +3', hit.x, hit.y - 40, '#bfdbfe');
+        sfx('mana');
+        if (p.team === 'P') battle.manaMaxP += 3;
+        else battle.manaMaxE += 3;
       }
     }
   }
+  battle.projectiles = battle.projectiles.filter(p =>
+    p.life > 0 &&
+    p.x > -40 && p.x < W + 40 &&
+    p.y > TOP_UI - 40 && p.y < TOP_UI + FIELD_H + 40
+  );
+
+  // floats & particelle
+  for (const f of battle.floats) {
+    f.t += dt;
+    f.y -= 25 * dt;
+  }
+  battle.floats = battle.floats.filter(f => f.t < 1.0);
+
+  for (const p of battle.particles) {
+    p.t += dt;
+    p.x += p.vx * 60 * dt;
+    p.y += p.vy * 60 * dt;
+    p.vy += 0.08;
+  }
+  battle.particles = battle.particles.filter(p => p.t < p.life);
+
+  // pulizia unità fuori campo o morte
+  battle.units = battle.units.filter(u =>
+    u.hp > 0 &&
+    u.y > TOP_UI + 20 &&
+    u.y < TOP_UI + FIELD_H - 20
+  );
+
+  // esito: corone
+  const pAlive = battle.playerTowers.filter(t => t.hp > 0).length;
+  const eAlive = battle.enemyTowers.filter(t => t.hp > 0).length;
+  battle.crowns.you = 2 - eAlive;
+  battle.crowns.enemy = 2 - pAlive;
+
+  if (battle.playing && (pAlive === 0 || eAlive === 0)) {
+    battle.playing = false;
+    if (eAlive === 0 && pAlive > 0) {
+      profile.wins++;
+      battle.message = 'Vittoria!';
+      sfx('win');
+    } else if (pAlive === 0 && eAlive > 0) {
+      profile.losses++;
+      battle.message = 'Sconfitta!';
+      sfx('lose');
+    } else {
+      profile.draws++;
+      battle.message = 'Pareggio';
+    }
+    saveProfile();
+  }
 }
 
-// ===================== Reset partita =====================
-let endBanner = '';
-function resetMatch(){
-  state.playing = true;
-  state.time = 0;
-  state.mana = 5;
-  state.enemyMana = 5;
-  state.crownsYou = 0;
-  state.crownsEnemy = 0;
-  state.units.length = 0;
-  state.projectiles.length = 0;
-  state.playerTowers.forEach(t=>{ t.hp = t.maxHp; });
-  state.enemyTowers.forEach(t=>{ t.hp = t.maxHp; });
-  state.manaCrystal.hp = state.manaCrystal.maxHp;
-  state.manaCrystal.alive = true;
-  state.manaCrystal.lastHitBy = null;
-  endBanner = '';
+// ============================= Input partita =================================
+
+function handlePlayTap(x, y) {
+  if (!battle) return;
+  if (y >= TOP_UI && y <= TOP_UI + FIELD_H) {
+    // tap sul campo → cambio corsia
+    const laneW = W / 3;
+    const lane = Math.floor(x / laneW);
+    battle.selectedLane = clamp(lane, 0, 2);
+    return;
+  }
+
+  // tap sulle carte
+  if (y >= H - BOTTOM_UI && y <= H) {
+    // mappo sui rect delle carte
+    const deck = profile.deck
+      .map(id => cardById(id))
+      .filter(Boolean)
+      .slice(0, 4);
+
+    const totalW = W - 40;
+    const cardW = totalW / deck.length;
+    const startX = 20;
+
+    for (let i = 0; i < deck.length; i++) {
+      const cx = startX + i * cardW;
+      const cy = H - BOTTOM_UI + 50;
+      if (x >= cx && x <= cx + cardW && y >= cy - 10 && y <= cy + 110) {
+        playCard(deck[i]);
+        return;
+      }
+    }
+
+    // pulsante Riavvia
+    const btnW = 120;
+    const bx = W / 2 - btnW / 2;
+    const by = H - 70;
+    if (x >= bx && x <= bx + btnW && y >= by - 24 && y <= by + 24) {
+      newBattle();
+    }
+  }
 }
 
-// ===================== Rendering =====================
-function drawBackground(){
-  // campo
-  ctx.fillStyle = '#e3f2fd';
-  ctx.fillRect(0,0,LOGICAL_W,FIELD_H);
+function playCard(card) {
+  if (!battle.playing) return;
+  if (battle.manaP < card.cost) {
+    addFloat('Mana insufficiente', W / 2, H - BOTTOM_UI - 10, '#fecaca');
+    return;
+  }
+  battle.manaP -= card.cost;
+  spawnUnit('P', battle.selectedLane, card.id);
+}
 
-  // leggera texture a righe
-  ctx.strokeStyle = '#c5e1f5';
+// =========================== Rendering =======================================
+
+function drawBackground() {
+  const arena = currentArena();
+
+  // sfondo scuro
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, arena.bgTop);
+  bg.addColorStop(1, '#020617');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // prato / terreno
+  const g = ctx.createLinearGradient(0, TOP_UI, 0, TOP_UI + FIELD_H);
+  g.addColorStop(0, arena.grassLight);
+  g.addColorStop(1, arena.grassDark);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, TOP_UI, W, FIELD_H);
+
+  // texture leggera
+  ctx.strokeStyle = 'rgba(0,0,0,0.05)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for(let y=0;y<FIELD_H;y+=64){
-    ctx.moveTo(0,y); ctx.lineTo(LOGICAL_W,y);
+  for (let y = TOP_UI; y <= TOP_UI + FIELD_H; y += 64) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
   }
-  for(let x=0;x<LOGICAL_W;x+=80){
-    ctx.moveTo(x,0); ctx.lineTo(x,FIELD_H);
+  for (let x = 0; x <= W; x += 80) {
+    ctx.moveTo(x, TOP_UI);
+    ctx.lineTo(x, TOP_UI + FIELD_H);
   }
   ctx.stroke();
 
-  // highlight corsia selezionata
-  const laneW = LOGICAL_W / 3;
-  ctx.fillStyle = 'rgba(255,255,255,0.18)';
-  ctx.fillRect(selectedLane * laneW, 0, laneW, FIELD_H);
+  // corsie
+  ctx.fillStyle = 'rgba(148,163,184,0.18)';
+  const laneW = W / 3;
+  ctx.fillRect(laneW * battle.selectedLane, TOP_UI, laneW, FIELD_H);
 
   // fiume
-  const riverH = 40;
-  const y0 = RIVER_Y - riverH/2;
-  const grad = ctx.createLinearGradient(0,y0,0,y0+riverH);
-  grad.addColorStop(0,'#b3e5fc');
-  grad.addColorStop(1,'#4fc3f7');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0,y0,LOGICAL_W,riverH);
+  const riverY = TOP_UI + FIELD_H * 0.5;
+  const h = 36;
+  const water = ctx.createLinearGradient(0, riverY - h / 2, 0, riverY + h / 2);
+  water.addColorStop(0, '#bfdbfe');
+  water.addColorStop(1, '#60a5fa');
+  ctx.fillStyle = water;
+  ctx.fillRect(0, riverY - h / 2, W, h);
+
+  // bordi fiume
+  ctx.fillStyle = '#b45309';
+  ctx.fillRect(0, riverY - h / 2 - 10, W, 8);
+  ctx.fillRect(0, riverY + h / 2 + 2, W, 8);
 
   // ponti
-  ctx.fillStyle = '#8d6e63';
-  const bridgeW = 140, bridgeH = 22;
-  ctx.fillRect(LOGICAL_W*0.3-bridgeW/2,RIVER_Y-bridgeH/2,bridgeW,bridgeH);
-  ctx.fillRect(LOGICAL_W*0.7-bridgeW/2,RIVER_Y-bridgeH/2,bridgeW,bridgeH);
+  const bridge = x => {
+    softShadow(x, riverY + 10, 70, 12, 0.3);
+    ctx.save();
+    ctx.translate(x, riverY);
+    const b = ctx.createLinearGradient(0, -18, 0, 18);
+    b.addColorStop(0, '#facc15');
+    b.addColorStop(1, '#b45309');
+    ctx.fillStyle = b;
+    ctx.fillRect(-70, -18, 140, 36);
+    ctx.strokeStyle = '#78350f';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(-70, -18, 140, 36);
+    ctx.restore();
+  };
+  bridge(W * 0.3);
+  bridge(W * 0.7);
 }
 
-function drawTower(t, friendly){
-  // base
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.35)';
-  ctx.shadowBlur = 10;
-  ctx.fillStyle = '#cfd8dc';
+function drawTower(t, friendly) {
+  softShadow(t.x, t.y + 16, 30, 12, 0.28);
+
+  // base cilindro
+  const body = ctx.createLinearGradient(t.x, t.y - 26, t.x, t.y + 26);
+  body.addColorStop(0, '#e5e7eb');
+  body.addColorStop(1, '#9ca3af');
+  ctx.fillStyle = body;
   ctx.beginPath();
-  ctx.roundRect(t.x-26,t.y-30,52,60,10);
+  ctx.ellipse(t.x, t.y, 26, 30, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
+  ctx.strokeStyle = '#4b5563';
+  ctx.lineWidth = 3;
+  ctx.stroke();
 
-  // cupola
-  ctx.fillStyle = friendly ? '#42a5f5' : '#ef5350';
+  // "cannone"
+  ctx.fillStyle = friendly ? '#60a5fa' : '#fb7185';
   ctx.beginPath();
-  ctx.arc(t.x, t.y-14, 18, 0, Math.PI*2);
+  ctx.arc(t.x, t.y - 6, 16, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = '#1f2933';
+  ctx.stroke();
 
-  // cannone (solo decorativo)
-  ctx.fillStyle = '#263238';
-  ctx.fillRect(t.x-6, t.y-4, 12, 14);
-
-  // barra HP
-  const w = 70, h = 7;
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(t.x-w/2, t.y-40, w, h);
-  const ratio = clamp(t.hp/t.maxHp, 0, 1);
-  const g = ctx.createLinearGradient(t.x-w/2,0,t.x+w/2,0);
-  g.addColorStop(0,'#81c784');
-  g.addColorStop(1,'#43a047');
-  ctx.fillStyle = g;
-  ctx.fillRect(t.x-w/2, t.y-40, w*ratio, h);
+  // barra vita
+  const w = 80;
+  const h = 8;
+  const ratio = clamp(t.hp / t.maxHp, 0, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(t.x - w / 2, t.y - 42, w, h);
+  const bar = ctx.createLinearGradient(t.x - w / 2, 0, t.x + w / 2, 0);
+  bar.addColorStop(0, '#22c55e');
+  bar.addColorStop(1, '#16a34a');
+  ctx.fillStyle = bar;
+  ctx.fillRect(t.x - w / 2, t.y - 42, w * ratio, h);
 }
 
-function drawUnit(u){
-  // ombra
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.beginPath();
-  ctx.ellipse(u.x, u.y+10, 18, 6, 0, 0, Math.PI*2);
-  ctx.fill();
+function drawUnit(u) {
+  softShadow(u.x, u.y + 10, 18, 8, 0.26);
 
-  // corpo stile "mini soldato"
-  const bodyColor = (u.team === 'player') ? '#42a5f5' : '#ffb74d';
-  const accent    = (u.type === 'tank') ? '#ff7043' :
-                    (u.type === 'spark') ? '#fff176' :
-                    (u.type === 'healer') ? '#81c784' : bodyColor;
-
-  ctx.fillStyle = bodyColor;
-  ctx.beginPath();
-  ctx.roundRect(u.x-14, u.y-22, 28, 30, 6);
-  ctx.fill();
-
-  ctx.fillStyle = accent;
-  ctx.beginPath();
-  ctx.roundRect(u.x-10, u.y-18, 20, 18, 4);
-  ctx.fill();
+  // corpo
+  ctx.fillStyle = u.color;
+  ctx.fillRect(u.x - 14, u.y - 18, 28, 26);
 
   // testa
-  ctx.fillStyle = '#ffe0b2';
+  ctx.fillStyle = '#fed7aa';
   ctx.beginPath();
-  ctx.arc(u.x, u.y-30, 10, 0, Math.PI*2);
+  ctx.arc(u.x, u.y - 24, 10, 0, Math.PI * 2);
   ctx.fill();
 
-  // occhi
-  ctx.fillStyle = '#37474f';
+  // viso semplice
+  ctx.fillStyle = '#1f2933';
   ctx.beginPath();
-  ctx.arc(u.x-3, u.y-31, 1.4, 0, Math.PI*2);
-  ctx.arc(u.x+3, u.y-31, 1.4, 0, Math.PI*2);
+  ctx.arc(u.x - 4, u.y - 26, 1.3, 0, Math.PI * 2);
+  ctx.arc(u.x + 4, u.y - 26, 1.3, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillRect(u.x - 4, u.y - 21, 8, 1.5);
+
+  // simbolo classe
+  ctx.fillStyle = 'rgba(15,23,42,0.7)';
+  if (u.type === 'melee') {
+    ctx.fillRect(u.x - 6, u.y - 10, 12, 10);
+  } else if (u.type === 'ranged') {
+    ctx.beginPath();
+    ctx.moveTo(u.x, u.y - 10);
+    ctx.lineTo(u.x + 7, u.y);
+    ctx.lineTo(u.x - 7, u.y);
+    ctx.closePath();
+    ctx.fill();
+  } else if (u.type === 'healer') {
+    ctx.fillRect(u.x - 2, u.y - 11, 4, 12);
+    ctx.fillRect(u.x - 7, u.y - 6, 14, 4);
+  }
 
   // barra HP
-  const ratio = clamp(u.hp/u.maxHp, 0, 1);
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(u.x-12, u.y-40, 24, 5);
-  const g = ctx.createLinearGradient(u.x-12,0,u.x+12,0);
-  g.addColorStop(0,'#a5d6a7');
-  g.addColorStop(1,'#43a047');
-  ctx.fillStyle = g;
-  ctx.fillRect(u.x-12, u.y-40, 24*ratio, 5);
+  const ratio = clamp(u.hp / u.maxHp, 0, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(u.x - 14, u.y - 32, 28, 4);
+  ctx.fillStyle = '#22c55e';
+  ctx.fillRect(u.x - 14, u.y - 32, 28 * ratio, 4);
 }
 
-function drawCrystal(){
-  const c = state.manaCrystal;
-  if(!c.alive) return;
-
+function drawCrystal() {
+  const c = battle.crystal;
+  if (!c.alive && c.hp <= 0 && !c.broken) {
+    c.broken = true;
+  }
   // base
-  ctx.fillStyle = '#455a64';
+  softShadow(c.x, c.y + 18, 30, 12, 0.28);
+  ctx.fillStyle = '#111827';
   ctx.beginPath();
-  ctx.ellipse(c.x, c.y+16, 26, 10, 0, 0, Math.PI*2);
+  ctx.ellipse(c.x, c.y + 6, 26, 12, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // cristallo
-  const g = ctx.createLinearGradient(c.x, c.y-32, c.x, c.y+32);
-  g.addColorStop(0,'#e1f5fe');
-  g.addColorStop(1,'#0288d1');
-  ctx.fillStyle = g;
+  const g = ctx.createLinearGradient(c.x, c.y - 30, c.x, c.y + 30);
+  g.addColorStop(0, '#e0f2fe');
+  g.addColorStop(1, '#60a5fa');
+  ctx.save();
+  ctx.translate(c.x, c.y);
   ctx.beginPath();
-  ctx.moveTo(c.x, c.y-32);
-  ctx.lineTo(c.x+22, c.y);
-  ctx.lineTo(c.x, c.y+32);
-  ctx.lineTo(c.x-22, c.y);
+  ctx.moveTo(0, -30);
+  ctx.lineTo(24, 0);
+  ctx.lineTo(0, 30);
+  ctx.lineTo(-24, 0);
   ctx.closePath();
+  ctx.fillStyle = g;
   ctx.fill();
-  ctx.strokeStyle = '#01579b';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#1d4ed8';
+  ctx.lineWidth = 3;
   ctx.stroke();
+  ctx.restore();
 
   // barra HP
-  const ratio = clamp(c.hp/c.maxHp, 0, 1);
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(c.x-24, c.y-42, 48, 6);
-  const g2 = ctx.createLinearGradient(c.x-24,0,c.x+24,0);
-  g2.addColorStop(0,'#b3e5fc');
-  g2.addColorStop(1,'#0288d1');
-  ctx.fillStyle = g2;
-  ctx.fillRect(c.x-24, c.y-42, 48*ratio, 6);
+  const ratio = clamp(c.hp / c.maxHp, 0, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(c.x - 30, c.y - 40, 60, 5);
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillRect(c.x - 30, c.y - 40, 60 * ratio, 5);
 
-  ctx.fillStyle = '#e1f5fe';
-  ctx.font = '11px system-ui';
+  ctx.fillStyle = 'rgba(15,23,42,0.8)';
+  ctx.font = '12px system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText('Cristallo Mana', c.x, c.y-52);
+  ctx.fillText('Cristallo del Mana', c.x, c.y - 46);
 }
 
-function drawProjectiles(){
-  for(const p of state.projectiles){
-    // scia
+function drawProjectiles() {
+  for (const p of battle.projectiles) {
+    const trail = ctx.createLinearGradient(
+      p.x - p.vx * 0.03, p.y - p.vy * 0.03,
+      p.x, p.y
+    );
+    trail.addColorStop(0, 'rgba(0,0,0,0)');
+    trail.addColorStop(1, p.colorB);
     ctx.save();
-    ctx.globalAlpha = 0.4;
-    const gx0 = p.x - p.vx*0.05;
-    const gy0 = p.y - p.vy*0.05;
-    const grad = ctx.createLinearGradient(gx0,gy0,p.x,p.y);
-    grad.addColorStop(0, 'rgba(255,255,255,0)');
-    grad.addColorStop(1, p.colorB);
-    ctx.strokeStyle = grad;
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = trail;
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(gx0,gy0);
-    ctx.lineTo(p.x,p.y);
+    ctx.moveTo(p.x - p.vx * 0.03, p.y - p.vy * 0.03);
+    ctx.lineTo(p.x, p.y);
     ctx.stroke();
     ctx.restore();
 
-    // corpo
-    const glow = ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,8);
-    glow.addColorStop(0,p.colorA);
-    glow.addColorStop(1,'rgba(255,255,255,0)');
+    const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 8);
+    glow.addColorStop(0, p.colorA);
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.save();
     ctx.globalAlpha = 0.9;
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(p.x,p.y,6,0,Math.PI*2);
+    ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
 }
 
-function drawTopBar(){
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(0,0,LOGICAL_W,26);
-  ctx.fillStyle = '#ffd54f';
-  ctx.font = 'bold 13px system-ui';
-  ctx.textAlign = 'left';
-  ctx.fillText('👑 ' + state.crownsYou, 8, 17);
-  ctx.textAlign = 'right';
-  ctx.fillText(state.crownsEnemy + ' 👑', LOGICAL_W-8, 17);
-}
-
-function drawManaAndCards(){
-  const barX = 16, barY = FIELD_H + 12;
-  const barW = LOGICAL_W - 32, barH = 12;
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(barX, barY, barW, barH);
-  const ratio = state.mana / state.manaMax;
-  const g = ctx.createLinearGradient(barX,0,barX+barW,0);
-  g.addColorStop(0,'#64b5f6');
-  g.addColorStop(1,'#1e88e5');
-  ctx.fillStyle = g;
-  ctx.fillRect(barX, barY, barW*ratio, barH);
-
-  if(manaFlash > 0){
-    ctx.save();
-    ctx.globalAlpha = manaFlash / 0.4;
-    ctx.fillStyle = 'rgba(244,67,54,0.5)';
-    ctx.fillRect(barX, barY, barW, barH);
-    ctx.restore();
+function drawFloatsAndParticles() {
+  ctx.font = '12px system-ui';
+  ctx.textAlign = 'center';
+  for (const f of battle.floats) {
+    const a = 1 - f.t;
+    ctx.fillStyle = `rgba(15,23,42,${a})`;
+    ctx.fillText(f.text, f.x, f.y);
   }
 
-  ctx.fillStyle = '#fff';
-  ctx.font = '11px system-ui';
-  ctx.textAlign = 'left';
-  ctx.fillText('Mana: ' + Math.floor(state.mana) + ' / ' + state.manaMax, barX, barY-4);
-
-  // carte
-  const cardY = FIELD_H + 32;
-  const pad = 12;
-  const gap = 8;
-  const totalGap = gap * (CARDS.length-1);
-  const cardW = (LOGICAL_W - pad*2 - totalGap) / CARDS.length;
-  const cardH = UI_H - 42;
-
-  cardRects = [];
-  for(let i=0;i<CARDS.length;i++){
-    const c = CARDS[i];
-    const x = pad + i*(cardW+gap);
-    const y = cardY;
-    cardRects.push({ x, y, w:cardW, h:cardH });
-
-    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  for (const p of battle.particles) {
+    const a = 1 - p.t / p.life;
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = a;
     ctx.beginPath();
-    ctx.roundRect(x, y, cardW, cardH, 10);
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawTopBar() {
+  ctx.fillStyle = 'rgba(15,23,42,0.85)';
+  ctx.fillRect(0, 0, W, TOP_UI);
+
+  ctx.font = '14px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#e5e7eb';
+  ctx.fillText(
+    `In partita: tocca il campo per scegliere corsia, poi le carte. Vittorie: ${profile.wins}`,
+    10, 26
+  );
+
+  // corone
+  ctx.textAlign = 'left';
+  ctx.fillText('👑 ' + battle.crowns.you, 10, 14);
+  ctx.textAlign = 'right';
+  ctx.fillText(battle.crowns.enemy + ' 👑', W - 10, 14);
+}
+
+function drawBottomUI() {
+  const startY = H - BOTTOM_UI;
+
+  ctx.fillStyle = 'rgba(15,23,42,0.95)';
+  ctx.fillRect(0, startY, W, BOTTOM_UI);
+
+  // barra mana
+  const manaY = startY + 24;
+  ctx.fillStyle = '#020617';
+  ctx.fillRect(16, manaY - 8, W - 32, 10);
+  const r = battle.manaP / battle.manaMaxP;
+  const g = ctx.createLinearGradient(16, 0, W - 16, 0);
+  g.addColorStop(0, '#38bdf8');
+  g.addColorStop(1, '#3b82f6');
+  ctx.fillStyle = g;
+  ctx.fillRect(16, manaY - 8, (W - 32) * clamp(r, 0, 1), 10);
+  ctx.fillStyle = '#e5e7eb';
+  ctx.font = '12px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText(
+    `Mana: ${battle.manaP.toFixed(1)} / ${battle.manaMaxP}`,
+    16, manaY - 12
+  );
+
+  // carte del mazzo attivo
+  const deckIds = profile.deck.filter(id => cardById(id)).slice(0, 4);
+  const cards = deckIds.map(id => cardById(id));
+  const totalW = W - 40;
+  const cardW = totalW / cards.length;
+  const baseX = 20;
+  const cardY = startY + 40;
+
+  ctx.textAlign = 'center';
+
+  for (let i = 0; i < cards.length; i++) {
+    const c = cards[i];
+    const x = baseX + i * cardW;
+    const w = cardW - 6;
+
+    // corpo carta
+    ctx.fillStyle = 'rgba(15,23,42,0.9)';
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x, cardY, w, 90, 10);
+    ctx.fill();
+    ctx.stroke();
+
+    // icona unità
+    ctx.fillStyle = c.color;
+    const cx = x + w / 2;
+    const cy = cardY + 30;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 14, 0, Math.PI * 2);
     ctx.fill();
 
+    ctx.fillStyle = '#020617';
+    ctx.font = '11px system-ui';
+    ctx.fillText(c.name, cx, cardY + 60);
+
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '10px system-ui';
+    ctx.fillText('Costo ' + c.cost, cx, cardY + 75);
+
+    // zona hit
+    addHitZone(x, cardY, w, 90, () => playCard(c));
+  }
+
+  // pulsante Riavvia
+  const btnW = 120;
+  const bx = W / 2 - btnW / 2;
+  const by = H - 60;
+  ctx.fillStyle = '#1d4ed8';
+  ctx.beginPath();
+  ctx.roundRect(bx, by - 20, btnW, 40, 20);
+  ctx.fill();
+  ctx.fillStyle = '#e5e7eb';
+  ctx.font = '14px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('Riavvia', W / 2, by + 5);
+  addHitZone(bx, by - 20, btnW, 40, () => newBattle());
+}
+
+function drawBattle() {
+  drawBackground();
+
+  for (const t of battle.playerTowers) drawTower(t, true);
+  for (const t of battle.enemyTowers) drawTower(t, false);
+
+  if (battle.crystal.alive || battle.crystal.hp > 0) {
+    drawCrystal();
+  }
+
+  for (const u of battle.units) drawUnit(u);
+  drawProjectiles();
+  drawFloatsAndParticles();
+  drawTopBar();
+  drawBottomUI();
+
+  // messaggio finale
+  if (!battle.playing && battle.message) {
+    ctx.fillStyle = 'rgba(15,23,42,0.8)';
+    ctx.fillRect(W / 2 - 160, TOP_UI + FIELD_H / 2 - 60, 320, 120);
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(W / 2 - 160, TOP_UI + FIELD_H / 2 - 60, 320, 120);
+
+    ctx.fillStyle = '#e5e7eb';
+    ctx.textAlign = 'center';
+    ctx.font = '24px system-ui';
+    ctx.fillText(battle.message, W / 2, TOP_UI + FIELD_H / 2 - 16);
+    ctx.font = '14px system-ui';
+    ctx.fillText('Tocca "Riavvia" per rigiocare o', W / 2, TOP_UI + FIELD_H / 2 + 8);
+    ctx.fillText('vai al Menu in basso al centro.', W / 2, TOP_UI + FIELD_H / 2 + 28);
+  }
+}
+
+// ============================= Schermata Menu ================================
+
+function drawButton(x, y, w, h, label, subtitle, onClick) {
+  ctx.fillStyle = 'rgba(15,23,42,0.9)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 16);
+  ctx.fill();
+  ctx.strokeStyle = '#4b5563';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = '#e5e7eb';
+  ctx.textAlign = 'center';
+  ctx.font = '18px system-ui';
+  ctx.fillText(label, x + w / 2, y + 26);
+  if (subtitle) {
+    ctx.font = '12px system-ui';
+    ctx.fillStyle = '#9ca3af';
+    ctx.fillText(subtitle, x + w / 2, y + 46);
+  }
+
+  addHitZone(x, y, w, h, onClick);
+}
+
+function drawMenu() {
+  const arena = currentArena();
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, arena.bgTop);
+  bg.addColorStop(1, '#020617');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#e5e7eb';
+  ctx.textAlign = 'center';
+  ctx.font = '32px system-ui';
+  ctx.fillText('Arena Duel', W / 2, 160);
+
+  ctx.font = '14px system-ui';
+  ctx.fillText(
+    `Vittorie: ${profile.wins}  •  Sconfitte: ${profile.losses}  •  Pareggi: ${profile.draws}`,
+    W / 2, 190
+  );
+
+  ctx.font = '16px system-ui';
+  ctx.fillStyle = '#bfdbfe';
+  ctx.fillText(`Arena selezionata: ${arena.name}`, W / 2, 220);
+
+  drawButton(W / 2 - 150, 280, 300, 70, 'Gioca',
+    'Partita veloce contro IA', () => {
+      newBattle();
+      screen = 'play';
+    });
+
+  drawButton(W / 2 - 150, 380, 300, 70, 'Carte',
+    'Gestisci mazzo & sblocchi', () => {
+      screen = 'cards';
+    });
+
+  drawButton(W / 2 - 150, 480, 300, 70, 'Arene',
+    'Scegli la grafica e difficoltà', () => {
+      screen = 'arenas';
+    });
+}
+
+// ========================== Schermata Carte (mazzo) ==========================
+
+function drawCardsScreen() {
+  const arena = currentArena();
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, arena.bgTop);
+  bg.addColorStop(1, '#020617');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#e5e7eb';
+  ctx.textAlign = 'center';
+  ctx.font = '26px system-ui';
+  ctx.fillText('Carte & Mazzo', W / 2, 80);
+  ctx.font = '14px system-ui';
+  ctx.fillText('Tocca una carta per aggiungerla/toglierla dal mazzo (max 4).', W / 2, 110);
+  ctx.fillText(`Mazzo attuale: ${profile.deck.join(', ')}`, W / 2, 132);
+
+  const cols = 2;
+  const cardW = 260;
+  const cardH = 140;
+  const startX = (W - (cols * cardW + (cols - 1) * 20)) / 2;
+  let x = startX;
+  let y = 170;
+  let col = 0;
+
+  ctx.textAlign = 'left';
+
+  for (const c of CARD_DATA) {
+    const unlocked = profile.wins >= c.unlockWins;
+    ctx.fillStyle = unlocked ? 'rgba(15,23,42,0.95)' : 'rgba(30,64,175,0.4)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, cardW, cardH, 16);
+    ctx.fill();
+    ctx.strokeStyle = profile.deck.includes(c.id) ? '#38bdf8' : '#4b5563';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // icona
     ctx.fillStyle = c.color;
     ctx.beginPath();
-    ctx.roundRect(x+4, y+4, cardW-8, cardH-26, 8);
+    ctx.arc(x + 40, y + 40, 20, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '16px system-ui';
+    ctx.fillText(c.name, x + 80, y + 32);
     ctx.font = '12px system-ui';
-    ctx.textAlign = 'center';
-    ctx.fillText(c.label, x+cardW/2, y+cardH-10);
+    ctx.fillText(`Costo: ${c.cost}`, x + 80, y + 52);
+    ctx.fillText(c.desc, x + 80, y + 72);
 
-    if(c.key !== 'reset'){
-      ctx.font = 'bold 14px system-ui';
-      ctx.fillText(String(c.cost), x+cardW/2, y+18);
-    }else{
-      ctx.font = '12px system-ui';
-      ctx.fillText('↻', x+cardW/2, y+18);
+    if (!unlocked) {
+      ctx.fillStyle = '#fecaca';
+      ctx.fillText(`Sblocca con ${c.unlockWins} vittorie`, x + 80, y + 92);
+    } else {
+      ctx.fillStyle = profile.deck.includes(c.id) ? '#bbf7d0' : '#e5e7eb';
+      ctx.fillText(
+        profile.deck.includes(c.id) ? 'Nel mazzo' : 'Tocca per aggiungere',
+        x + 80, y + 92
+      );
+    }
+
+    addHitZone(x, y, cardW, cardH, () => {
+      if (!unlocked) return;
+      const idx = profile.deck.indexOf(c.id);
+      if (idx >= 0) {
+        profile.deck.splice(idx, 1);
+      } else {
+        if (profile.deck.length < 4) profile.deck.push(c.id);
+      }
+      saveProfile();
+    });
+
+    col++;
+    if (col >= cols) {
+      col = 0;
+      x = startX;
+      y += cardH + 20;
+    } else {
+      x += cardW + 20;
     }
   }
 
+  // bottone ritorno
+  drawButton(W / 2 - 120, H - 100, 240, 60, 'Torna al Menu', null, () => {
+    screen = 'menu';
+  });
+}
+
+// ============================ Schermata Arene =================================
+
+function drawArenasScreen() {
+  const arena = currentArena();
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, arena.bgTop);
+  bg.addColorStop(1, '#020617');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#e5e7eb';
   ctx.textAlign = 'center';
-  ctx.font = '11px system-ui';
-  ctx.fillStyle = '#cfd8dc';
-  ctx.fillText('Tocca il campo per scegliere la corsia, poi le carte.', LOGICAL_W/2, FIELD_H+UI_H-6);
+  ctx.font = '26px system-ui';
+  ctx.fillText('Scelta Arena', W / 2, 80);
+  ctx.font = '14px system-ui';
+  ctx.fillText('Ogni arena cambia grafica e difficoltà.', W / 2, 110);
+
+  const cardW = 260;
+  const cardH = 120;
+  const startX = (W - cardW) / 2;
+  let y = 160;
+
+  for (const a of ARENAS) {
+    const selected = a.id === profile.arenaId;
+    const locked = false; // qui potresti vincolare in base alle vittorie
+
+    ctx.fillStyle = locked ? 'rgba(55,65,81,0.6)' : 'rgba(15,23,42,0.95)';
+    ctx.beginPath();
+    ctx.roundRect(startX, y, cardW, cardH, 16);
+    ctx.fill();
+    ctx.strokeStyle = selected ? '#38bdf8' : '#4b5563';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // anteprima colore prato
+    const g = ctx.createLinearGradient(0, 0, 0, 60);
+    g.addColorStop(0, a.grassLight);
+    g.addColorStop(1, a.grassDark);
+    ctx.fillStyle = g;
+    ctx.fillRect(startX + 10, y + 10, cardW - 20, 50);
+
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '18px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(a.name, startX + 20, y + 85);
+    ctx.font = '12px system-ui';
+    ctx.fillText(`Difficoltà: ${a.difficulty}`, startX + 20, y + 105);
+
+    if (selected) {
+      ctx.fillStyle = '#bbf7d0';
+      ctx.fillText('Selezionata', startX + 140, y + 105);
+    }
+
+    addHitZone(startX, y, cardW, cardH, () => {
+      if (locked) return;
+      profile.arenaId = a.id;
+      saveProfile();
+    });
+
+    y += cardH + 20;
+  }
+
+  drawButton(W / 2 - 120, H - 100, 240, 60, 'Torna al Menu', null, () => {
+    screen = 'menu';
+  });
 }
 
-function drawEndBanner(){
-  if(!endBanner) return;
-  ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  const w = LOGICAL_W*0.8;
-  const h = 80;
-  const x = (LOGICAL_W-w)/2;
-  const y = FIELD_H/2 - h/2;
-  ctx.beginPath();
-  ctx.roundRect(x,y,w,h,12);
-  ctx.fill();
+// ================================ Loop =======================================
 
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 24px system-ui';
-  ctx.textAlign = 'center';
-  ctx.fillText(endBanner, LOGICAL_W/2, y+32);
-  ctx.font = '13px system-ui';
-  ctx.fillText("Tocca 'Riavvia' per giocare ancora.", LOGICAL_W/2, y+54);
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.033);
+  last = now;
+
+  clearHitZones();
+
+  if (screen === 'play') {
+    updateBattle(dt);
+    drawBattle();
+  } else if (screen === 'cards') {
+    drawCardsScreen();
+  } else if (screen === 'arenas') {
+    drawArenasScreen();
+  } else {
+    drawMenu();
+  }
+
+  // mappa sul canvas reale
+  ctx.setTransform(scale, 0, 0, scale, offX, offY);
+  requestAnimationFrame(frame);
 }
+newBattle();
+requestAnimationFrame(frame);
 
-function render(){
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  ctx.setTransform(scale,0,0,scale,offX,offY);
-
-  drawBackground();
-  drawTopBar();
-
-  // torri
-  for(const t of state.enemyTowers) drawTower(t,false);
-  for(const t of state.playerTowers) drawTower(t,true);
-
-  drawCrystal();
-
-  // unità + proiettili
-  for(const u of state.units) drawUnit(u);
-  drawProjectiles();
-
-  drawManaAndCards();
-  drawEndBanner();
-}
-
-// ===================== Loop principale =====================
-let lastTime = performance.now();
-function loop(now){
-  const dt = Math.min(0.05, (now - lastTime) / 1000);
-  lastTime = now;
-  update(dt);
-  render();
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
-
-// ===================== PWA: service worker =====================
-if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js').catch(()=>{});
+// ======================== Service worker per PWA ============================
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 </script>
 </body>
